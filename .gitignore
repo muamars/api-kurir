@@ -24,3 +24,5 @@ yarn-error.log
 .kiro
 .vscode
 .vs
+.github
+test_api.http

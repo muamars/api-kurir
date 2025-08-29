@@ -23,6 +23,9 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'division_id',
+        'phone',
+        'is_active',
     ];
 
     /**
@@ -45,6 +48,37 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
+    }
+
+    public function division()
+    {
+        return $this->belongsTo(Division::class);
+    }
+
+    public function createdShipments()
+    {
+        return $this->hasMany(Shipment::class, 'created_by');
+    }
+
+    public function approvedShipments()
+    {
+        return $this->hasMany(Shipment::class, 'approved_by');
+    }
+
+    public function assignedShipments()
+    {
+        return $this->hasMany(Shipment::class, 'assigned_driver_id');
+    }
+
+    public function shipmentProgress()
+    {
+        return $this->hasMany(ShipmentProgress::class, 'driver_id');
+    }
+
+    public function notifications()
+    {
+        return $this->hasMany(Notification::class);
     }
 }

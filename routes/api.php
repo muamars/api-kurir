@@ -5,9 +5,24 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BlogController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\Api\AuthController as ApiAuthController;
+use App\Http\Controllers\Api\ShipmentController;
+use App\Http\Controllers\Api\ShipmentProgressController;
+use App\Http\Controllers\Api\DivisionController;
+use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\FileController;
+use App\Http\Controllers\Api\RoleController;
+use App\Http\Controllers\Api\PermissionController;
 
 // Authentication Routes (Public - tidak perlu token)
 Route::post('/login', [AuthController::class, 'apiLogin']);
+
+// Courier Tracking API Authentication
+Route::prefix('v1')->group(function () {
+    Route::post('/auth/login', [ApiAuthController::class, 'login']);
+});
 
 // Protected Routes (Perlu token)
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -48,5 +63,62 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::middleware('permission:delete projects')->group(function () {
         Route::delete('/projects/{project}', [ProjectController::class, 'apiDestroy']);
+    });
+
+    // Courier Tracking API Routes
+    Route::prefix('v1')->group(function () {
+        Route::post('/auth/logout', [ApiAuthController::class, 'logout']);
+        Route::get('/auth/me', [ApiAuthController::class, 'me']);
+
+        // Shipment Routes
+        Route::get('/shipments', [ShipmentController::class, 'index']);
+        Route::post('/shipments', [ShipmentController::class, 'store']);
+        Route::get('/shipments/{shipment}', [ShipmentController::class, 'show']);
+
+        // Admin/Manager actions
+        Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
+        Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
+
+        // Driver actions
+        Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);
+
+        // Progress tracking
+        Route::post('/shipments/{shipment}/destinations/{destination}/progress', [ShipmentProgressController::class, 'updateProgress']);
+        Route::get('/shipments/{shipment}/progress', [ShipmentProgressController::class, 'getProgress']);
+        Route::get('/driver/history', [ShipmentProgressController::class, 'getDriverHistory']);
+
+        // Dashboard
+        Route::get('/dashboard', [DashboardController::class, 'index']);
+        Route::get('/dashboard/chart', [DashboardController::class, 'getChartData']);
+
+        // Notifications
+        Route::get('/notifications', [NotificationController::class, 'index']);
+        Route::get('/notifications/unread-count', [NotificationController::class, 'getUnreadCount']);
+        Route::post('/notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
+        Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
+        Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
+
+        // File management
+        Route::post('/shipments/{shipment}/upload-spj', [FileController::class, 'uploadSpj']);
+        Route::get('/shipments/{shipment}/download-spj', [FileController::class, 'downloadSpj']);
+        Route::get('/shipments/{shipment}/download-photos', [FileController::class, 'downloadShipmentPhotos']);
+        Route::get('/shipments/{shipment}/files', [FileController::class, 'getFileInfo']);
+
+        // Master data
+        Route::get('/divisions', [DivisionController::class, 'index']);
+        Route::get('/drivers', [UserController::class, 'getDrivers']);
+        Route::get('/users', [UserController::class, 'getUsers']);
+
+        // Role & Permission Management Routes (Admin only)
+        Route::middleware('role:Admin')->group(function () {
+            // Roles
+            Route::apiResource('roles', RoleController::class);
+            Route::post('/roles/{role}/assign-permissions', [RoleController::class, 'assignPermissions']);
+            Route::post('/roles/{role}/remove-permissions', [RoleController::class, 'removePermissions']);
+
+            // Permissions
+            Route::apiResource('permissions', PermissionController::class);
+            Route::get('/permissions-grouped', [PermissionController::class, 'getByGroup']);
+        });
     });
 });
