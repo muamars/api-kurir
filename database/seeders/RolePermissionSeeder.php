@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
@@ -15,79 +14,126 @@ class RolePermissionSeeder extends Seeder
      */
     public function run(): void
     {
-        // Create permissions
+        // Create permissions for courier tracking system
         $permissions = [
-            // Blog permissions
-            'view blogs',
-            'create blogs',
-            'edit blogs',
-            'delete blogs',
+            // Dashboard permissions
+            'view-dashboard',
+            'view-analytics',
 
-            // Project permissions
-            'view projects',
-            'create projects',
-            'edit projects',
-            'delete projects',
+            // Shipment permissions
+            'view-shipments',
+            'create-shipments',
+            'edit-shipments',
+            'delete-shipments',
+            'approve-shipments',
+            'assign-drivers',
+
+            // Progress tracking permissions
+            'view-progress',
+            'update-progress',
+            'view-driver-history',
 
             // User management permissions
-            'view users',
-            'create users',
-            'edit users',
-            'delete users',
+            'view-users',
+            'create-users',
+            'edit-users',
+            'delete-users',
 
             // Role management permissions
-            'view roles',
-            'create roles',
-            'edit roles',
-            'delete roles',
+            'view-roles',
+            'create-roles',
+            'edit-roles',
+            'delete-roles',
+
+            // Permission management
+            'view-permissions',
+            'create-permissions',
+            'edit-permissions',
+            'delete-permissions',
+
+            // Division management
+            'view-divisions',
+            'create-divisions',
+            'edit-divisions',
+            'delete-divisions',
+
+            // Notification permissions
+            'view-notifications',
+            'manage-notifications',
+
+            // File management permissions
+            'upload-files',
+            'download-files',
+            'manage-files',
         ];
 
         foreach ($permissions as $permission) {
-            Permission::create(['name' => $permission]);
+            Permission::firstOrCreate(['name' => $permission]);
         }
 
-        // Create roles
-        $adminRole = Role::create(['name' => 'Admin']);
-        $writerRole = Role::create(['name' => 'Writer']);
-        $managerRole = Role::create(['name' => 'Manager']);
+        // Create roles for courier tracking system
+        $adminRole = Role::firstOrCreate(['name' => 'Admin']);
+        $kurirRole = Role::firstOrCreate(['name' => 'Kurir']);
+        $userRole = Role::firstOrCreate(['name' => 'User']);
 
-        // Assign permissions to roles
-        $adminRole->givePermissionTo(Permission::all());
-
-        $writerRole->givePermissionTo([
-            'view blogs',
-            'create blogs',
-            'edit blogs',
-            'delete blogs',
+        // Assign permissions to Admin role (full access)
+        $adminRole->givePermissionTo([
+            'view-dashboard',
+            'view-analytics',
+            'view-shipments',
+            'create-shipments',
+            'edit-shipments',
+            'delete-shipments',
+            'approve-shipments',
+            'assign-drivers',
+            'view-progress',
+            'view-users',
+            'create-users',
+            'edit-users',
+            'delete-users',
+            'view-roles',
+            'create-roles',
+            'edit-roles',
+            'delete-roles',
+            'view-permissions',
+            'create-permissions',
+            'edit-permissions',
+            'delete-permissions',
+            'view-divisions',
+            'create-divisions',
+            'edit-divisions',
+            'delete-divisions',
+            'view-notifications',
+            'manage-notifications',
+            'upload-files',
+            'download-files',
+            'manage-files',
         ]);
 
-        $managerRole->givePermissionTo([
-            'view projects',
-            'create projects',
-            'edit projects',
-            'delete projects',
+        // Assign permissions to Kurir role (driver-specific)
+        $kurirRole->givePermissionTo([
+            'view-dashboard',
+            'view-shipments',
+            'view-progress',
+            'update-progress',
+            'view-driver-history',
+            'view-notifications',
+            'upload-files',
+            'download-files',
         ]);
 
-        // Create default users
-        $admin = User::create([
-            'name' => 'Admin User',
-            'email' => 'admin@example.com',
-            'password' => bcrypt('password'),
+        // Assign permissions to User role (basic user)
+        $userRole->givePermissionTo([
+            'view-dashboard',
+            'view-shipments',
+            'create-shipments',
+            'view-progress',
+            'view-notifications',
+            'upload-files',
+            'download-files',
         ]);
-        $admin->assignRole('Admin');
 
-        $writer = User::create([
-            'name' => 'Writer User',
-            'email' => 'writer@example.com',
-            'password' => bcrypt('password'),
-        ]);
-        $writer->assignRole('Writer');
-
-        $manager = User::create([
-            'name' => 'Manager User',
-            'email' => 'manager@example.com',
-            'password' => bcrypt('password'),
-        ]);
-        $manager->assignRole('Manager');
+        // Create default users (will be handled by CourierTrackingSeeder)
+        // This seeder only handles roles and permissions
     }
 }

@@ -10,8 +10,7 @@ class DivisionController extends Controller
 {
     public function index(): JsonResponse
     {
-        $divisions = Division::all();
-
+        $divisions = Division::select('id', 'name', 'description')->get();
         return response()->json([
             'data' => $divisions
         ]);
