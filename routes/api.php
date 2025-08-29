@@ -22,6 +22,9 @@ Route::post('/login', [AuthController::class, 'apiLogin']);
 // Courier Tracking API Authentication
 Route::prefix('v1')->group(function () {
     Route::post('/auth/login', [ApiAuthController::class, 'login']);
+
+    // Test token generation (development only)
+    Route::post('/auth/generate-test-token', [ApiAuthController::class, 'generateTestToken']);
 });
 
 // Protected Routes (Perlu token)

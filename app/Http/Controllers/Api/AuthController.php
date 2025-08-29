@@ -73,4 +73,60 @@ class AuthController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Generate permanent API token for testing
+     */
+    public function generateTestToken(Request $request): JsonResponse
+    {
+        // Only allow in development/testing environment
+        if (!app()->environment(['local', 'testing'])) {
+            return response()->json([
+                'message' => 'Token generation only available in development environment'
+            ], 403);
+        }
+
+        $request->validate([
+            'email' => 'required|email|exists:users,email',
+            'token_name' => 'string|max:255',
+            'expires_in_days' => 'nullable|integer|min:1|max:365'
+        ]);
+
+        $user = \App\Models\User::where('email', $request->email)->first();
+
+        if (!$user->is_active) {
+            return response()->json([
+                'message' => 'User account is inactive'
+            ], 403);
+        }
+
+        $tokenName = $request->token_name ?? 'test-token-' . now()->format('Y-m-d-H-i-s');
+        $tokenResult = $user->createToken($tokenName, ['*']);
+
+        // Set expiration if specified
+        if ($request->expires_in_days) {
+            $expirationDate = now()->addDays($request->expires_in_days);
+            $tokenResult->accessToken->update([
+                'expires_at' => $expirationDate
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Test token generated successfully',
+            'data' => [
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'roles' => $user->getRoleNames(),
+                    'division' => $user->division,
+                ],
+                'token' => $tokenResult->plainTextToken,
+                'token_name' => $tokenName,
+                'expires_at' => $request->expires_in_days ?
+                    now()->addDays($request->expires_in_days)->toISOString() : null,
+                'is_permanent' => !$request->expires_in_days
+            ]
+        ]);
+    }
 }

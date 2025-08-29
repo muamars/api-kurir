@@ -1,30 +1,27 @@
 # Product Overview
 
-Laravel Starter Kit dengan Role & Permission - A complete Laravel starter kit with authentication, role-based access control (RBAC), and content management system.
+Track Kurir is a courier tracking API system with role-based access control for managing shipments, deliveries, and progress tracking.
 
-## Core Features
+## Core Purpose
 
--   Authentication system (Login/Logout)
--   Role-based Access Control (RBAC) using Spatie Laravel Permission
--   Permission-based authorization
--   Dashboard with statistics
--   Blog management system
--   Project management system
--   User management (Admin only)
--   Role & permission management (Admin only)
+-   Manage courier shipments from creation to delivery
+-   Track real-time delivery progress with photo uploads
+-   Provide role-based access for Admin, Kurir (Driver), and User roles
+-   Support multi-destination deliveries and priority levels
 
-## Default User Roles
+## Key Features
 
--   **Admin**: Full access to all features
--   **Writer**: Blog management access only
--   **Manager**: Project management access only
+-   **Authentication**: Laravel Sanctum with role-based permissions
+-   **Shipment Management**: Create, approve, assign, and track shipments
+-   **Real-time Tracking**: GPS location and photo-based progress updates
+-   **Multi-role Support**: Admin (full access), Kurir (driver operations), User (basic tracking)
+-   **File Management**: SPJ document uploads and delivery photo management
+-   **Notifications**: Real-time notifications for all shipment events
+-   **Analytics**: Dashboard with statistics and chart data
 
-## Key Permissions
+## Business Context
 
--   `view-dashboard`: Dashboard access
--   `manage-blogs`: Blog CRUD operations
--   `manage-projects`: Project CRUD operations
--   `manage-users`: User CRUD operations
--   `manage-roles`: Role & permission CRUD operations
-
-This is a multi-tenant application designed for content management with granular permission control.
+-   Indonesian courier/logistics domain (uses Indonesian terminology)
+-   Multi-division organization structure
+-   Priority-based delivery system (regular, urgent)
+-   Photo documentation required for delivery proof

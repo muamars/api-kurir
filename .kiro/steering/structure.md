@@ -1,124 +1,76 @@
-# Project Structure
+# Project Structure & Organization
 
-## Laravel Application Structure
+## API Architecture
 
-### Core Application (`app/`)
+This is a Laravel API-first application with clear separation of concerns following Laravel conventions.
 
-```
-app/
-├── Http/
-│   ├── Controllers/        # Route controllers
-│   │   ├── Admin/         # Admin-only controllers (UserController, RoleController)
-│   │   ├── AuthController # Authentication logic
-│   │   ├── BlogController # Blog CRUD operations
-│   │   ├── ProjectController # Project CRUD operations
-│   │   └── DashboardController # Dashboard with statistics
-│   └── Requests/          # Form request validation classes
-│       ├── LoginRequest
-│       ├── Store/UpdateBlogRequest
-│       ├── Store/UpdateProjectRequest
-│       ├── Store/UpdateUserRequest
-│       └── Store/UpdateRoleRequest
-├── Models/                # Eloquent models
-│   ├── User.php          # User model with roles
-│   ├── Blog.php          # Blog model
-│   └── Project.php       # Project model
-└── Providers/            # Service providers
-    └── AppServiceProvider.php
-```
-
-### Frontend Resources (`resources/`)
+## Controller Organization
 
 ```
-resources/
-├── css/
-│   └── app.css           # Main stylesheet (TailwindCSS)
-├── js/
-│   ├── app.js           # Main JavaScript entry
-│   └── bootstrap.js     # Bootstrap configuration
-└── views/               # Blade templates
-    ├── layouts/
-    │   └── app.blade.php # Main layout template
-    ├── auth/
-    │   └── login.blade.php # Login form
-    ├── admin/           # Admin-only views
-    │   ├── users/       # User management views
-    │   └── roles/       # Role management views
-    ├── blogs/           # Blog management views
-    ├── projects/        # Project management views
-    ├── dashboard.blade.php # Dashboard view
-    └── welcome.blade.php   # Landing page
+app/Http/Controllers/Api/
+├── AuthController.php              # Authentication & token management
+├── ShipmentController.php          # Shipment CRUD & workflow
+├── ShipmentProgressController.php  # Progress tracking & updates
+├── DashboardController.php         # Analytics & statistics
+├── NotificationController.php      # Notification management
+├── FileController.php              # File uploads & downloads
+├── DivisionController.php          # Division management
+├── UserController.php              # User management
+├── RoleController.php              # Role management (Admin only)
+└── PermissionController.php        # Permission management (Admin only)
 ```
 
-### Database (`database/`)
+## Model Relationships
 
 ```
-database/
-├── migrations/          # Database schema migrations
-├── seeders/            # Database seeders
-│   └── RolePermissionSeeder.php # Default roles & permissions
-├── factories/          # Model factories for testing
-└── database.sqlite     # SQLite database file
+app/Models/
+├── User.php                 # Users with roles, divisions, and shipment relations
+├── Division.php             # Company divisions/departments
+├── Shipment.php             # Main shipment entity
+├── ShipmentDestination.php  # Multiple delivery destinations per shipment
+├── ShipmentItem.php         # Items within shipments
+├── ShipmentProgress.php     # Progress tracking with photos
+└── Notification.php         # User notifications
 ```
 
-### Configuration (`config/`)
+## Request Validation
 
--   Standard Laravel configuration files
--   `permission.php` - Spatie permission configuration
--   `database.php` - Database connections (defaults to SQLite)
+-   All API endpoints use Form Request classes for validation
+-   Located in `app/Http/Requests/` with descriptive names
+-   Validation rules are centralized and reusable
 
-### Routes (`routes/`)
+## API Versioning & Routes
 
--   `web.php` - Web routes with middleware protection
--   `api.php` - API routes (if needed)
--   `console.php` - Artisan commands
+-   API routes are versioned under `/api/v1/` prefix
+-   Authentication routes are public, all others require Sanctum token
+-   Role-based middleware protects admin-only endpoints
+-   Permission-based middleware for granular access control
 
-## Naming Conventions
+## File Storage Structure
 
-### Controllers
+-   SPJ documents: `storage/app/spj/`
+-   Progress photos: `storage/app/progress_photos/`
+-   Thumbnails: Auto-generated with Intervention Image
 
--   Use singular nouns: `BlogController`, `ProjectController`
--   Admin controllers in `Admin/` namespace
--   Resource controllers for CRUD operations
+## Database Conventions
 
-### Models
+-   Uses standard Laravel migration naming
+-   Foreign key relationships follow Laravel conventions
+-   Soft deletes not implemented (hard deletes used)
+-   Timestamps on all relevant tables
 
--   Singular nouns: `User`, `Blog`, `Project`
--   Use Eloquent relationships and accessors/mutators
+## Service Layer
 
-### Views
+-   `app/Services/NotificationService.php` handles notification logic
+-   Services encapsulate complex business logic outside controllers
 
--   Organized by feature: `blogs/`, `projects/`, `admin/`
--   Use kebab-case for file names
--   Blade templates use `.blade.php` extension
+## Console Commands
 
-### Permissions
+-   `app/Console/Commands/GenerateApiToken.php` for development token generation
+-   Custom Artisan commands for common development tasks
 
--   Use kebab-case: `manage-blogs`, `view-dashboard`
--   Follow pattern: `action-resource`
+## Testing Structure
 
-### Middleware
-
--   Permission-based: `middleware('permission:manage-blogs')`
--   Role-based: `middleware('role:Admin')`
-
-## Architecture Patterns
-
-### Authorization
-
--   Use Spatie Laravel Permission package
--   Check permissions in controllers with `$this->authorize()`
--   Use middleware for route protection
--   Blade directives: `@can()`, `@cannot()`
-
-### Request Validation
-
--   Separate Form Request classes for validation
--   Store/Update request pairs for each resource
--   Validation rules in dedicated classes
-
-### Database
-
--   Use migrations for schema changes
--   Seeders for default data (roles, permissions, users)
--   Factories for testing data generation
+-   Feature tests for API endpoints
+-   Unit tests for business logic
+-   Test database seeding for consistent test data

@@ -1,73 +1,77 @@
-# Technology Stack
+# Tech Stack & Development
 
-## Backend Framework
+## Framework & Core Technologies
 
 -   **Laravel 12.x** (PHP 8.2+)
--   **Spatie Laravel Permission** for role-based access control
 -   **Laravel Sanctum** for API authentication
--   **SQLite** database (default, configurable to MySQL/PostgreSQL)
+-   **Spatie Laravel Permission** for role-based access control
+-   **PostgreSQL** database (configurable to MySQL/SQLite)
 
-## Frontend Stack
+## Key Dependencies
 
--   **Vite** for asset bundling and hot reload
--   **TailwindCSS 4.x** for styling
--   **Blade templates** for server-side rendering
--   **Axios** for HTTP requests
+-   **Scramble** - Automatic API documentation generation
+-   **Intervention Image v3** - Photo processing and thumbnails
+-   **Laravel Pint** - Code formatting
+-   **PHPUnit** - Testing framework
+-   **Laravel Sail** - Docker development environment
 
-## Development Tools
+## Frontend Build Tools
 
--   **Laravel Pint** for code formatting
--   **PHPUnit** for testing
--   **Laravel Sail** for Docker development
--   **Laravel Pail** for log monitoring
--   **Concurrently** for running multiple dev processes
+-   **Vite** - Build tool and dev server
+-   **TailwindCSS v4** - CSS framework
+-   **Concurrently** - Run multiple dev processes
 
-## Common Commands
+## Common Development Commands
 
-### Development
+### Server & Development
 
 ```bash
-# Start development environment (all services)
+# Start development server
+php artisan serve
+
+# Run all dev processes (server, queue, logs, vite)
 composer run dev
 
-# Individual services
-php artisan serve          # Laravel server
-npm run dev               # Vite dev server
-php artisan queue:listen  # Queue worker
-php artisan pail          # Log monitoring
+# Run queue worker for notifications
+php artisan queue:work
+
+# Monitor application logs
+php artisan pail
 ```
 
-### Database
+### Database Operations
 
 ```bash
-php artisan migrate              # Run migrations
-php artisan migrate:fresh --seed # Fresh migration with seeding
-php artisan db:seed             # Run seeders only
+# Fresh migration with seeding
+php artisan migrate:fresh --seed
+
+# Run specific seeder
+php artisan db:seed --class=RolePermissionSeeder
 ```
 
-### Testing
+### Testing & Code Quality
 
 ```bash
-php artisan test        # Run PHPUnit tests
-./vendor/bin/phpunit   # Direct PHPUnit execution
+# Run tests
+php artisan test
+
+# Format code with Pint
+./vendor/bin/pint
 ```
 
-### Code Quality
+### API Token Management
 
 ```bash
-./vendor/bin/pint      # Format code with Laravel Pint
+# Generate API token for testing
+php artisan api:generate-token admin@example.com
+
+# Generate token with expiration
+php artisan api:generate-token kurir@example.com --expires=30
 ```
 
-### Asset Building
+## Environment Configuration
 
-```bash
-npm run build          # Production build
-npm run dev           # Development build with watch
-```
-
-## Environment Setup
-
--   Copy `.env.example` to `.env`
--   Run `php artisan key:generate`
--   Configure database settings in `.env`
--   Default uses SQLite with `database/database.sqlite`
+-   Uses PostgreSQL by default (DB_CONNECTION=pgsql)
+-   Queue connection uses database driver
+-   File storage uses local disk
+-   Supports both local and production environments

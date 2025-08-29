@@ -194,6 +194,62 @@ Setelah seeding, Anda dapat login dengan:
 -   **REST Client**: Gunakan file `test_api.http` dengan VS Code REST Client extension
 -   **38+ Test Cases**: Complete scenarios untuk Admin, Driver, dan User workflows
 
+## 🔑 Token Generation untuk Testing
+
+### Via Artisan Command (Recommended)
+
+```bash
+# Generate permanent token untuk admin
+php artisan api:generate-token admin@example.com
+
+# Generate token dengan nama custom
+php artisan api:generate-token admin@example.com --name="my-test-token"
+
+# Generate token dengan expiration (30 hari)
+php artisan api:generate-token kurir@example.com --expires=30
+
+# Generate token dengan abilities tertentu
+php artisan api:generate-token user@example.com --abilities="view-shipments,create-shipments"
+```
+
+### Via API Endpoint (Development Only)
+
+```bash
+# Generate permanent token
+curl -X POST http://localhost:8000/api/v1/auth/generate-test-token \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@example.com", "token_name": "permanent-test-token"}'
+
+# Generate temporary token (7 days)
+curl -X POST http://localhost:8000/api/v1/auth/generate-test-token \
+  -H "Content-Type: application/json" \
+  -d '{"email": "kurir@example.com", "token_name": "temp-token", "expires_in_days": 7}'
+```
+
+### Contoh Response Token Generation
+
+```json
+{
+    "message": "Test token generated successfully",
+    "data": {
+        "user": {
+            "id": 1,
+            "name": "Admin User",
+            "email": "admin@example.com",
+            "roles": ["Admin"],
+            "division": {
+                "id": 1,
+                "name": "Sales"
+            }
+        },
+        "token": "1|abc123def456...",
+        "token_name": "permanent-test-token",
+        "expires_at": null,
+        "is_permanent": true
+    }
+}
+```
+
 ## 🔗 API Endpoints
 
 ### Authentication
@@ -202,6 +258,7 @@ Setelah seeding, Anda dapat login dengan:
 POST   /api/v1/auth/login
 POST   /api/v1/auth/logout
 GET    /api/v1/auth/me
+POST   /api/v1/auth/generate-test-token    # Development only
 ```
 
 ### Shipments
@@ -242,27 +299,35 @@ GET    /api/v1/notifications/unread-count
 ### File Management
 
 ```
-POST   /api/v1/files/upload-spj
-GET    /api/v1/files/download-spj/{id}
-GET    /api/v1/files/download-photos/{id}
+POST   /api/v1/shipments/{id}/upload-spj
+GET    /api/v1/shipments/{id}/download-spj
+GET    /api/v1/shipments/{id}/download-photos
+GET    /api/v1/shipments/{id}/files
 ```
 
 ### Master Data
 
 ```
 GET    /api/v1/divisions
+GET    /api/v1/drivers
 GET    /api/v1/users
 POST   /api/v1/users
 PUT    /api/v1/users/{id}
 DELETE /api/v1/users/{id}
+
+# Admin only routes
 GET    /api/v1/roles
 POST   /api/v1/roles
 PUT    /api/v1/roles/{id}
 DELETE /api/v1/roles/{id}
+POST   /api/v1/roles/{id}/assign-permissions
+POST   /api/v1/roles/{id}/remove-permissions
+
 GET    /api/v1/permissions
 POST   /api/v1/permissions
 PUT    /api/v1/permissions/{id}
 DELETE /api/v1/permissions/{id}
+GET    /api/v1/permissions-grouped
 ```
 
 ## 🏗️ Project Structure
@@ -318,6 +383,12 @@ DELETE /api/v1/permissions/{id}
 └── NotificationService.php  # Notification handling
 ```
 
+### Commands (`app/Console/Commands/`)
+
+```
+└── GenerateApiToken.php     # Generate API tokens for testing
+```
+
 ## 🔧 Development Commands
 
 ### Development
@@ -331,6 +402,9 @@ php artisan queue:work
 
 # Monitor logs
 php artisan pail
+
+# Generate API token for testing
+php artisan api:generate-token admin@example.com
 ```
 
 ### Database
@@ -371,11 +445,11 @@ API ini siap diintegrasikan dengan frontend apapun:
 }
 ```
 
-### Authentication
+### Authentication Flow
 
 ```javascript
-// Login
-const response = await fetch("/api/v1/auth/login", {
+// 1. Login
+const loginResponse = await fetch("/api/v1/auth/login", {
     method: "POST",
     headers: {
         "Content-Type": "application/json",
@@ -386,16 +460,86 @@ const response = await fetch("/api/v1/auth/login", {
     }),
 });
 
-const { data } = await response.json();
+const { data } = await loginResponse.json();
 const token = data.token;
 
-// Use token for subsequent requests
-const shipments = await fetch("/api/v1/shipments", {
+// 2. Use token for subsequent requests
+const shipmentsResponse = await fetch("/api/v1/shipments", {
     headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
     },
 });
+
+const shipments = await shipmentsResponse.json();
+
+// 3. Create new shipment
+const createResponse = await fetch("/api/v1/shipments", {
+    method: "POST",
+    headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+        notes: "Urgent delivery",
+        priority: "urgent",
+        destinations: [
+            {
+                receiver_name: "John Doe",
+                delivery_address: "Jl. Sudirman No. 123, Jakarta",
+                shipment_note: "Call before delivery",
+            },
+        ],
+        items: [
+            {
+                item_name: "Documents",
+                quantity: 1,
+                description: "Important contracts",
+            },
+        ],
+    }),
+});
+
+// 4. Upload progress with photo (multipart/form-data)
+const formData = new FormData();
+formData.append("status", "delivered");
+formData.append("note", "Package delivered successfully");
+formData.append("receiver_name", "John Doe");
+formData.append("photo", photoFile);
+
+const progressResponse = await fetch(
+    "/api/v1/shipments/1/destinations/1/progress",
+    {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+    }
+);
+```
+
+### Error Handling
+
+```javascript
+const response = await fetch("/api/v1/shipments", {
+    headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+    },
+});
+
+if (!response.ok) {
+    const error = await response.json();
+    console.error("API Error:", error.message);
+
+    if (response.status === 401) {
+        // Token expired or invalid - redirect to login
+        window.location.href = "/login";
+    }
+}
+
+const data = await response.json();
 ```
 
 ## 🚀 Deployment
