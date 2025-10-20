@@ -233,4 +233,31 @@ class ShipmentController extends Controller
             'data' => $shipment
         ]);
     }
+
+    public function cancel(Request $request, Shipment $shipment): JsonResponse
+    {
+        // Only users with approve permission (admins/managers) can cancel
+        $this->authorize('approve-shipments');
+
+        // Prevent cancelling shipments that are already in progress or completed
+        if (in_array($shipment->status, ['in_progress', 'completed'])) {
+            return response()->json([
+                'message' => 'Cannot cancel a shipment that is in progress or completed'
+            ], 400);
+        }
+
+        $shipment->update([
+            'status' => 'cancelled',
+            'cancelled_by' => auth()->id(),
+            'cancelled_at' => now(),
+        ]);
+
+        // Notify relevant parties
+        app(\App\Services\NotificationService::class)->shipmentCancelled($shipment->fresh(['creator', 'driver']));
+
+        return response()->json([
+            'message' => 'Shipment cancelled successfully',
+            'data' => $shipment->fresh(['creator', 'driver'])
+        ]);
+    }
 }

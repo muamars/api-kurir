@@ -81,6 +81,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Admin/Manager actions
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
+        Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
 
         // Driver actions
         Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);

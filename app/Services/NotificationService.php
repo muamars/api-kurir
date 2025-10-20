@@ -146,4 +146,50 @@ class NotificationService
             ]
         ]);
     }
+
+    public function shipmentCancelled(Shipment $shipment): void
+    {
+        // Notify creator about cancellation
+        Notification::create([
+            'user_id' => $shipment->created_by,
+            'type' => 'shipment_cancelled',
+            'title' => 'Shipment Cancelled',
+            'message' => "Shipment {$shipment->shipment_id} has been cancelled",
+            'data' => [
+                'shipment_id' => $shipment->id,
+                'shipment_number' => $shipment->shipment_id,
+                'cancelled_by' => $shipment->cancelled_by,
+            ]
+        ]);
+
+        // Notify assigned driver if exists
+        if ($shipment->assigned_driver_id) {
+            Notification::create([
+                'user_id' => $shipment->assigned_driver_id,
+                'type' => 'shipment_cancelled_driver',
+                'title' => 'Cancelled Assignment',
+                'message' => "Your assignment for shipment {$shipment->shipment_id} has been cancelled",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                ]
+            ]);
+        }
+
+        // Notify all active admins
+        $admins = User::role('Admin')->where('is_active', true)->get();
+        foreach ($admins as $admin) {
+            Notification::create([
+                'user_id' => $admin->id,
+                'type' => 'shipment_cancelled_admin',
+                'title' => 'Shipment Cancelled',
+                'message' => "Shipment {$shipment->shipment_id} was cancelled",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'cancelled_by' => $shipment->cancelled_by,
+                ]
+            ]);
+        }
+    }
 }
