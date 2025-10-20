@@ -20,8 +20,6 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         
         $middleware->api(append: [
-            \Fruitcake\Cors\HandleCors::class,
-
             \App\Http\Middleware\ForceJsonResponse::class,
         ]);
     })
