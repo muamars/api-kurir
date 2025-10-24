@@ -19,6 +19,7 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->enum('priority', ['regular', 'urgent'])->default('regular');
             $table->date('deadline')->nullable();
+            // $table->date('time')->nullable();
             $table->string('surat_pengantar_kerja')->nullable(); // File path
             $table->timestamps();
 

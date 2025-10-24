@@ -92,7 +92,7 @@ class ShipmentController extends Controller
             $query->orderBy('created_at', 'desc');
         }
 
-        $perPage = $request->get('per_page', 15);
+        $perPage = $request->get('per_page', 500);
         $shipments = $query->paginate($perPage);
 
         return response()->json(ShipmentResource::collection($shipments));
@@ -110,6 +110,7 @@ class ShipmentController extends Controller
                 'notes' => $request->notes,
                 'priority' => $request->priority ?? 'regular',
                 'deadline' => $request->deadline,
+                // 'time' => $request->time,
             ]);
 
             // Create destinations
