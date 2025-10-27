@@ -26,7 +26,7 @@ class Shipment extends Model
 
     protected $casts = [
         'approved_at' => 'datetime',
-        'deadline' => 'date',
+        'deadline' => 'datetime',
     ];
 
     public function creator(): BelongsTo

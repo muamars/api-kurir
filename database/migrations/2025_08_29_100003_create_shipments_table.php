@@ -18,11 +18,9 @@ return new class extends Migration
             $table->string('status')->default('pending'); // pending, approved, assigned, in_progress, completed, cancelled
             $table->text('notes')->nullable();
             $table->enum('priority', ['regular', 'urgent'])->default('regular');
-            $table->date('deadline')->nullable();
-            // $table->date('time')->nullable();
+            $table->dateTime('deadline')->nullable();
             $table->string('surat_pengantar_kerja')->nullable(); // File path
             $table->timestamps();
-
             $table->index(['status', 'priority']);
             $table->index('assigned_driver_id');
         });
