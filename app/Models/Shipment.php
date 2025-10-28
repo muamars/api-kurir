@@ -29,6 +29,11 @@ class Shipment extends Model
         'deadline' => 'datetime',
     ];
 
+    // tambahan baru
+
+
+    // batas
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
