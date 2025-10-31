@@ -22,6 +22,8 @@ class Shipment extends Model
         'priority',
         'deadline',
         'surat_pengantar_kerja',
+        'cancelled_by',     
+        'cancelled_at',
     ];
 
     protected $casts = [
@@ -83,4 +85,10 @@ class Shipment extends Model
     {
         return $query->where('assigned_driver_id', $driverId);
     }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
 }
