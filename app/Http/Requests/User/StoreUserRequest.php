@@ -11,7 +11,7 @@ class StoreUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return auth()->user()->can('create users');
+        return auth()->user()->can('manage-users');
     }
 
     /**
@@ -25,7 +25,10 @@ class StoreUserRequest extends FormRequest
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
-            'roles' => 'required|array',
+            'phone' => 'nullable|string|max:20',
+            'division_id' => 'nullable|exists:divisions,id',
+            'is_active' => 'boolean',
+            'roles' => 'required|array|min:1',
             'roles.*' => 'exists:roles,name',
         ];
     }

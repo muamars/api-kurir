@@ -11,7 +11,7 @@ class UpdateUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return auth()->user()->can('edit users');
+        return auth()->user()->can('manage-users');
     }
 
     /**
@@ -25,9 +25,12 @@ class UpdateUserRequest extends FormRequest
 
         return [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $userId,
+            'email' => ['required', 'email', \Illuminate\Validation\Rule::unique('users')->ignore($userId)],
             'password' => 'nullable|string|min:8|confirmed',
-            'roles' => 'required|array',
+            'phone' => 'nullable|string|max:20',
+            'division_id' => 'nullable|exists:divisions,id',
+            'is_active' => 'boolean',
+            'roles' => 'required|array|min:1',
             'roles.*' => 'exists:roles,name',
         ];
     }

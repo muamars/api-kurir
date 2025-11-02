@@ -191,7 +191,7 @@ class ShipmentController extends Controller
 
         if (!in_array($shipment->status, ['approved', 'assigned'])) {
             return response()->json([
-                'message' => 'Only approved shipments can be assigned'
+                'message' => 'Only approved or assigned shipments can be assigned'
             ], 400);
         }
 
@@ -209,6 +209,36 @@ class ShipmentController extends Controller
         ]);
     }
 
+    public function pending(Request $request, Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        $request->validate([
+            'driver_id' => 'required|exists:users,id',
+            'deadline' => 'nullable|date'
+        ]);
+
+        if (!in_array($shipment->status, ['assigned', 'in_progress'])) {
+            return response()->json([
+                'message' => 'Only assigned or in-progress shipments can be set to pending'
+            ], 400);
+        }
+
+        $shipment->update([
+            'assigned_driver_id' => $request->driver_id,
+            'status' => 'pending',
+            'deadline' => $request->deadline ?? $shipment->deadline,
+        ]);
+
+        // Send notification
+        app(NotificationService::class)->shipmentPending($shipment->fresh(['driver', 'creator']));
+
+        return response()->json([
+            'message' => 'Shipment set to pending with new driver successfully',
+            'data' => $shipment->fresh(['driver'])
+        ]);
+    }
+
     public function startDelivery(Shipment $shipment): JsonResponse
     {
         if ($shipment->assigned_driver_id !== auth()->id()) {
@@ -217,9 +247,9 @@ class ShipmentController extends Controller
             ], 403);
         }
 
-        if ($shipment->status !== 'assigned') {
+        if (!in_array($shipment->status, ['assigned', 'pending'])) {
             return response()->json([
-                'message' => 'Shipment must be assigned before starting delivery'
+                'message' => 'Shipment must be assigned or pending before starting delivery'
             ], 400);
         }
 
@@ -240,9 +270,9 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if (in_array($shipment->status, ['in_progress', 'completed'])) {
+        if (in_array($shipment->status, ['in_progress', 'completed', 'cancelled'])) {
             return response()->json([
-                'message' => 'Cannot cancel a shipment that is in progress or completed'
+                'message' => 'Cannot cancel a shipment that is in progress, completed, or already cancelled'
             ], 400);
         }
 

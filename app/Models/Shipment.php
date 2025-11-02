@@ -11,6 +11,14 @@ class Shipment extends Model
 {
     use HasFactory;
 
+    const STATUS_PENDING = 'pending';
+    const STATUS_APPROVED = 'approved';
+    const STATUS_ASSIGNED = 'assigned';
+    const STATUS_IN_PROGRESS = 'in_progress';
+    const STATUS_COMPLETED = 'completed';
+    const STATUS_CANCELLED = 'cancelled';
+    const STATUS_REASSIGNED = 'reassigned';
+
     protected $fillable = [
         'shipment_id',
         'created_by',
@@ -22,6 +30,8 @@ class Shipment extends Model
         'priority',
         'deadline',
         'surat_pengantar_kerja',
+        'cancelled_by',
+        'cancelled_at',
     ];
 
     protected $casts = [

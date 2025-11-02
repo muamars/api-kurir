@@ -81,6 +81,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Admin/Manager actions
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
+        Route::post('/shipments/{shipment}/pending', [ShipmentController::class, 'pending']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
 
         // Driver actions
@@ -115,6 +116,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Role & Permission Management Routes (Admin only)
         Route::middleware('role:Admin')->group(function () {
+            // User Management
+            Route::get('/users/{user}', [UserController::class, 'show']);
+            Route::apiResource('users', UserController::class)->except(['index', 'show']);
+
             // Roles
             Route::apiResource('roles', RoleController::class);
             Route::post('/roles/{role}/assign-permissions', [RoleController::class, 'assignPermissions']);

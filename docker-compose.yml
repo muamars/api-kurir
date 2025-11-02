@@ -1,0 +1,48 @@
+services:
+  app:
+    image: php:8.3-fpm
+    container_name: api-bs
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - network_api_bs
+    depends_on:
+      - db
+
+  web:
+    image: nginx:1.27
+    container_name: nginx_api_bs
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./:/var/www/html
+      - ./nginx.conf:/etc/nginx/conf.d/api-bs.conf
+    depends_on:
+      - app
+    networks:
+      - network_api_bs
+
+  db:
+    image: postgres:17
+    container_name: api_bs_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: laravel_db
+      POSTGRES_USER: laravel_user
+      POSTGRES_PASSWORD: laravel_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - network_api_bs
+
+networks:
+  network_api_bs:
+
+volumes:
+  pg_data:
