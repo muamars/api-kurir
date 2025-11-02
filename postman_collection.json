@@ -124,45 +124,10 @@
       ]
     },
     {
-      "name": "Shipments",
+      "name": "Admin - Shipments",
       "item": [
         {
-          "name": "Get All Shipments",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/shipments?per_page=10&status=pending",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "shipments"
-              ],
-              "query": [
-                {
-                  "key": "per_page",
-                  "value": "10"
-                },
-                {
-                  "key": "status",
-                  "value": "pending"
-                }
-              ]
-            },
-            "description": "Get paginated list of shipments with optional filters (status, priority, driver_id, division_id, date_from, date_to, search, created_by)"
-          },
-          "response": []
-        },
-        {
-          "name": "Create Shipment",
+          "name": "Approve Shipment",
           "request": {
             "method": "POST",
             "header": [
@@ -177,59 +142,8 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n    \"notes\": \"Urgent delivery for client meeting\",\n    \"priority\": \"urgent\",\n    \"deadline\": \"2025-11-15\",\n    \"destinations\": [\n        {\n            \"receiver_name\": \"John Doe\",\n            \"delivery_address\": \"Jl. Sudirman No. 123, Jakarta\",\n            \"shipment_note\": \"Call before delivery\"\n        },\n        {\n            \"receiver_name\": \"Jane Smith\",\n            \"delivery_address\": \"Jl. Thamrin No. 456, Jakarta\",\n            \"shipment_note\": \"Leave at reception\"\n        }\n    ],\n    \"items\": [\n        {\n            \"item_name\": \"Documents\",\n            \"quantity\": 1,\n            \"description\": \"Contract documents\"\n        },\n        {\n            \"item_name\": \"Laptop\",\n            \"quantity\": 1,\n            \"description\": \"MacBook Pro 14 inch\"\n        }\n    ]\n}"
+              "raw": "{\n    \"driver_id\": 2\n}"
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/shipments",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "shipments"
-              ]
-            },
-            "description": "Create a new shipment with destinations and items"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Shipment Details",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "shipments",
-                "{{shipment_id}}"
-              ]
-            },
-            "description": "Get detailed information about a specific shipment"
-          },
-          "response": []
-        },
-        {
-          "name": "Approve Shipment",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
             "url": {
               "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/approve",
               "host": [
@@ -243,7 +157,7 @@
                 "approve"
               ]
             },
-            "description": "Approve a pending shipment (Admin only)"
+            "description": "Approve a created shipment and assign driver (Admin only)"
           },
           "response": []
         },
@@ -278,12 +192,12 @@
                 "assign-driver"
               ]
             },
-            "description": "Assign a driver to an approved shipment (Admin only)"
+            "description": "Reassign driver to an assigned shipment (Admin only)"
           },
           "response": []
         },
         {
-          "name": "Set Shipment to Pending",
+          "name": "Pending Shipment",
           "request": {
             "method": "POST",
             "header": [
@@ -318,33 +232,6 @@
           "response": []
         },
         {
-          "name": "Start Delivery",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/start-delivery",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "shipments",
-                "{{shipment_id}}",
-                "start-delivery"
-              ]
-            },
-            "description": "Start delivery for assigned shipment (Driver only)"
-          },
-          "response": []
-        },
-        {
           "name": "Cancel Shipment",
           "request": {
             "method": "POST",
@@ -372,7 +259,7 @@
           "response": []
         },
         {
-          "name": "Update Progress",
+          "name": "Upload Admin Photos",
           "request": {
             "method": "POST",
             "header": [
@@ -385,24 +272,39 @@
               "mode": "formdata",
               "formdata": [
                 {
-                  "key": "progress_type",
-                  "value": "arrived",
-                  "description": "Progress type: arrived, delivered, failed"
+                  "key": "photos",
+                  "type": "file",
+                  "description": "Photo file 1 (max 5MB)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "description": "Photo file 2 (max 5MB, optional)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "description": "Photo file 3 (max 5MB, optional)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "description": "Photo file 4 (max 5MB, optional)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "description": "Photo file 5 (max 5MB, optional)"
                 },
                 {
                   "key": "notes",
-                  "value": "Arrived at destination",
-                  "description": "Optional notes"
-                },
-                {
-                  "key": "photo",
-                  "type": "file",
-                  "description": "Optional photo upload"
+                  "value": "Package photos for driver reference",
+                  "description": "Optional notes about the photos"
                 }
               ]
             },
             "url": {
-              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/destinations/{{destination_id}}/progress",
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/photos/admin",
               "host": [
                 "{{base_url}}"
               ],
@@ -411,17 +313,21 @@
                 "v1",
                 "shipments",
                 "{{shipment_id}}",
-                "destinations",
-                "{{destination_id}}",
-                "progress"
+                "photos",
+                "admin"
               ]
             },
-            "description": "Update delivery progress for a destination (Driver only)"
+            "description": "Upload photos of items/packages for driver reference (Admin only)"
           },
           "response": []
-        },
+        }
+      ]
+    },
+    {
+      "name": "User - Shipments",
+      "item": [
         {
-          "name": "Get Shipment Progress",
+          "name": "Get All Shipments",
           "request": {
             "method": "GET",
             "header": [
@@ -431,7 +337,101 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/progress",
+              "raw": "{{base_url}}/api/v1/shipments?per_page=10&status=created",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments"
+              ],
+              "query": [
+                {
+                  "key": "per_page",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "value": "created"
+                }
+              ]
+            },
+            "description": "Get paginated list of shipments with optional filters (status, priority, driver_id, division_id, date_from, date_to, search, created_by)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Shipment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"notes\": \"Urgent delivery for client meeting\",\n    \"courier_notes\": \"Please call receiver before delivery\",\n    \"priority\": \"urgent\",\n    \"scheduled_delivery_datetime\": \"2025-11-15 14:00:00\",\n    \"destinations\": [\n        {\n            \"receiver_name\": \"John Doe\",\n            \"delivery_address\": \"Jl. Sudirman No. 123, Jakarta\",\n            \"shipment_note\": \"Call before delivery\"\n        },\n        {\n            \"receiver_name\": \"Jane Smith\",\n            \"delivery_address\": \"Jl. Thamrin No. 456, Jakarta\",\n            \"shipment_note\": \"Leave at reception\"\n        }\n    ],\n    \"items\": [\n        {\n            \"item_name\": \"Documents\",\n            \"quantity\": 1,\n            \"description\": \"Contract documents\"\n        },\n        {\n            \"item_name\": \"Laptop\",\n            \"quantity\": 1,\n            \"description\": \"MacBook Pro 14 inch\"\n        }\n    ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments"
+              ]
+            },
+            "description": "Create a new shipment with destinations and items. Shipment will be created with 'created' status and admin can approve/pending/cancel it later."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Shipment Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "{{shipment_id}}"
+              ]
+            },
+            "description": "Get detailed information about a specific shipment"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Shipment Photos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/photos",
               "host": [
                 "{{base_url}}"
               ],
@@ -440,10 +440,10 @@
                 "v1",
                 "shipments",
                 "{{shipment_id}}",
-                "progress"
+                "photos"
               ]
             },
-            "description": "Get progress history for a shipment"
+            "description": "Get all photos for a shipment (admin uploads, pickup, delivery)"
           },
           "response": []
         },
@@ -537,9 +537,90 @@
             "description": "Download all photos for shipment as ZIP"
           },
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "Driver - Shipments",
+      "item": [
+        {
+          "name": "Start Delivery",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/start-delivery",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "{{shipment_id}}",
+                "start-delivery"
+              ]
+            },
+            "description": "Start delivery for assigned shipment (Driver only)"
+          },
+          "response": []
         },
         {
-          "name": "Get File Info",
+          "name": "Update Progress",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "progress_type",
+                  "value": "arrived",
+                  "description": "Progress type: arrived, delivered, failed"
+                },
+                {
+                  "key": "notes",
+                  "value": "Arrived at destination",
+                  "description": "Optional notes"
+                },
+                {
+                  "key": "photo",
+                  "type": "file",
+                  "description": "Optional photo upload"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/destinations/{{destination_id}}/progress",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "{{shipment_id}}",
+                "destinations",
+                "{{destination_id}}",
+                "progress"
+              ]
+            },
+            "description": "Update delivery progress for a destination (Driver only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Shipment Progress",
           "request": {
             "method": "GET",
             "header": [
@@ -549,7 +630,7 @@
               }
             ],
             "url": {
-              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/files",
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/progress",
               "host": [
                 "{{base_url}}"
               ],
@@ -558,10 +639,96 @@
                 "v1",
                 "shipments",
                 "{{shipment_id}}",
-                "files"
+                "progress"
               ]
             },
-            "description": "Get information about uploaded files for shipment"
+            "description": "Get progress history for a shipment"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Pickup Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photo",
+                  "type": "file",
+                  "description": "Pickup photo before departure"
+                },
+                {
+                  "key": "notes",
+                  "value": "Ready to depart with packages",
+                  "description": "Optional notes"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/photos/pickup",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "{{shipment_id}}",
+                "photos",
+                "pickup"
+              ]
+            },
+            "description": "Upload pickup photo before starting delivery (Driver only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Delivery Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photo",
+                  "type": "file",
+                  "description": "Delivery completion photo"
+                },
+                {
+                  "key": "notes",
+                  "value": "All packages delivered successfully",
+                  "description": "Optional notes"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/{{shipment_id}}/photos/delivery",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "{{shipment_id}}",
+                "photos",
+                "delivery"
+              ]
+            },
+            "description": "Upload delivery completion photo (Driver only)"
           },
           "response": []
         }

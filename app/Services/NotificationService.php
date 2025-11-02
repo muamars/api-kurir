@@ -29,22 +29,6 @@ class NotificationService
         }
     }
 
-    public function shipmentApproved(Shipment $shipment): void
-    {
-        // Notify creator about approval
-        Notification::create([
-            'user_id' => $shipment->created_by,
-            'type' => 'shipment_approved',
-            'title' => 'Shipment Approved',
-            'message' => "Your shipment {$shipment->shipment_id} has been approved by {$shipment->approver->name}",
-            'data' => [
-                'shipment_id' => $shipment->id,
-                'shipment_number' => $shipment->shipment_id,
-                'approver' => $shipment->approver->name,
-            ]
-        ]);
-    }
-
     public function shipmentAssigned(Shipment $shipment): void
     {
         // Notify driver about assignment
