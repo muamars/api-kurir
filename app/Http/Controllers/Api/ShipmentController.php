@@ -92,7 +92,7 @@ class ShipmentController extends Controller
             $query->orderBy('created_at', 'desc');
         }
 
-        $perPage = $request->get('per_page', 500);
+        $perPage = $request->get('per_page', 15);
         $shipments = $query->paginate($perPage);
 
         return response()->json(ShipmentResource::collection($shipments));
@@ -103,15 +103,17 @@ class ShipmentController extends Controller
         try {
             DB::beginTransaction();
 
-            $shipment = Shipment::create([
+            $shipmentData = [
                 'shipment_id' => 'SPJ-' . date('Ymd') . '-' . Str::random(6),
                 'created_by' => auth()->id(),
-                'status' => 'pending',
+                'status' => 'created', // Default status when created
                 'notes' => $request->notes,
+                'courier_notes' => $request->courier_notes,
                 'priority' => $request->priority ?? 'regular',
-                'deadline' => $request->deadline,
-                // 'time' => $request->time,
-            ]);
+                'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
+            ];
+
+            $shipment = Shipment::create($shipmentData);
 
             // Create destinations
             foreach ($request->destinations as $index => $destination) {
@@ -134,12 +136,13 @@ class ShipmentController extends Controller
 
             DB::commit();
 
-            // Send notification
+            // Send notification for shipment created
+            $shipment->load(['creator', 'destinations', 'items']);
             app(NotificationService::class)->shipmentCreated($shipment);
 
             return response()->json([
                 'message' => 'Shipment created successfully',
-                'data' => new ShipmentResource($shipment->load(['creator', 'destinations', 'items']))
+                'data' => new ShipmentResource($shipment)
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -161,24 +164,29 @@ class ShipmentController extends Controller
     {
         $this->authorize('approve-shipments');
 
-        if ($shipment->status !== 'pending') {
+        if ($shipment->status !== 'created') {
             return response()->json([
-                'message' => 'Only pending shipments can be approved'
+                'message' => 'Only created shipments can be approved'
             ], 400);
         }
 
+        $request->validate([
+            'driver_id' => 'required|exists:users,id'
+        ]);
+
         $shipment->update([
-            'status' => 'approved',
+            'assigned_driver_id' => $request->driver_id,
+            'status' => 'assigned',
             'approved_by' => auth()->id(),
             'approved_at' => now(),
         ]);
 
         // Send notification
-        app(NotificationService::class)->shipmentApproved($shipment->fresh(['creator', 'approver']));
+        app(NotificationService::class)->shipmentAssigned($shipment->fresh(['creator', 'approver', 'driver']));
 
         return response()->json([
-            'message' => 'Shipment approved successfully',
-            'data' => $shipment->fresh(['creator', 'approver'])
+            'message' => 'Shipment approved and driver assigned successfully',
+            'data' => $shipment->fresh(['creator', 'approver', 'driver'])
         ]);
     }
 
@@ -190,9 +198,9 @@ class ShipmentController extends Controller
             'driver_id' => 'required|exists:users,id'
         ]);
 
-        if (!in_array($shipment->status, ['approved', 'assigned'])) {
+        if ($shipment->status !== 'assigned') {
             return response()->json([
-                'message' => 'Only approved shipments can be assigned'
+                'message' => 'Only assigned shipments can be reassigned'
             ], 400);
         }
 
@@ -210,6 +218,36 @@ class ShipmentController extends Controller
         ]);
     }
 
+    public function pending(Request $request, Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        if ($shipment->status !== 'created') {
+            return response()->json([
+                'message' => 'Only created shipments can be set to pending'
+            ], 400);
+        }
+
+        $request->validate([
+            'driver_id' => 'required|exists:users,id',
+            'deadline' => 'nullable|date'
+        ]);
+
+        $shipment->update([
+            'assigned_driver_id' => $request->driver_id,
+            'status' => 'pending',
+            'deadline' => $request->deadline,
+        ]);
+
+        // Send notification
+        app(NotificationService::class)->shipmentPending($shipment->fresh(['driver', 'creator']));
+
+        return response()->json([
+            'message' => 'Shipment set to pending with driver assigned successfully',
+            'data' => $shipment->fresh(['driver'])
+        ]);
+    }
+
     public function startDelivery(Shipment $shipment): JsonResponse
     {
         if ($shipment->assigned_driver_id !== auth()->id()) {
@@ -218,9 +256,9 @@ class ShipmentController extends Controller
             ], 403);
         }
 
-        if ($shipment->status !== 'assigned') {
+        if (!in_array($shipment->status, ['assigned', 'pending'])) {
             return response()->json([
-                'message' => 'Shipment must be assigned before starting delivery'
+                'message' => 'Shipment must be assigned or pending before starting delivery'
             ], 400);
         }
 
@@ -241,9 +279,9 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if (in_array($shipment->status, ['in_progress', 'completed'])) {
+        if ($shipment->status !== 'created') {
             return response()->json([
-                'message' => 'Cannot cancel a shipment that is in progress or completed'
+                'message' => 'Only created shipments can be cancelled'
             ], 400);
         }
 

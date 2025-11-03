@@ -13,10 +13,11 @@ class StoreShipmentRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
+        $rules = [
             'notes' => 'nullable|string',
+            'courier_notes' => 'nullable|string',
             'priority' => 'nullable|in:regular,urgent',
-            'deadline' => 'nullable|date|after:today',
+            'scheduled_delivery_datetime' => 'nullable|date',
 
             'destinations' => 'required|array|min:1',
             'destinations.*.receiver_name' => 'required|string|max:255',
@@ -28,6 +29,8 @@ class StoreShipmentRequest extends FormRequest
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.description' => 'nullable|string',
         ];
+
+        return $rules;
     }
 
     public function messages(): array

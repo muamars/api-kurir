@@ -12,9 +12,7 @@ use App\Http\Controllers\Api\DivisionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\NotificationController;
-use App\Http\Controllers\Api\FileController;
-use App\Http\Controllers\Api\RoleController;
-use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\ShipmentPhotoController;
 
 // Authentication Routes (Public - tidak perlu token)
 Route::post('/login', [AuthController::class, 'apiLogin']);
@@ -81,6 +79,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Admin/Manager actions
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
+        Route::post('/shipments/{shipment}/pending', [ShipmentController::class, 'pending']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
 
         // Driver actions
@@ -102,11 +101,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
         Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
 
-        // File management
-        Route::post('/shipments/{shipment}/upload-spj', [FileController::class, 'uploadSpj']);
-        Route::get('/shipments/{shipment}/download-spj', [FileController::class, 'downloadSpj']);
-        Route::get('/shipments/{shipment}/download-photos', [FileController::class, 'downloadShipmentPhotos']);
-        Route::get('/shipments/{shipment}/files', [FileController::class, 'getFileInfo']);
+        // Shipment photos
+        Route::get('/shipments/{shipment}/photos', [ShipmentPhotoController::class, 'index']);
+        Route::post('/shipments/{shipment}/photos/admin', [ShipmentPhotoController::class, 'uploadAdminPhotos']);
+        Route::post('/shipments/{shipment}/photos/pickup', [ShipmentPhotoController::class, 'uploadPickupPhoto']);
+        Route::post('/shipments/{shipment}/photos/delivery', [ShipmentPhotoController::class, 'uploadDeliveryPhoto']);
+        Route::delete('/shipments/{shipment}/photos/{photo}', [ShipmentPhotoController::class, 'destroy']);
 
         // Master data
         Route::get('/divisions', [DivisionController::class, 'index']);
@@ -115,6 +115,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Role & Permission Management Routes (Admin only)
         Route::middleware('role:Admin')->group(function () {
+            // User Management
+            Route::get('/users/{user}', [UserController::class, 'show']);
+            Route::apiResource('users', UserController::class)->except(['index', 'show']);
+
             // Roles
             Route::apiResource('roles', RoleController::class);
             Route::post('/roles/{role}/assign-permissions', [RoleController::class, 'assignPermissions']);

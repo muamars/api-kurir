@@ -11,6 +11,12 @@ class Shipment extends Model
 {
     use HasFactory;
 
+    const STATUS_CREATED = 'created';
+    const STATUS_ASSIGNED = 'assigned';
+    const STATUS_IN_PROGRESS = 'in_progress';
+    const STATUS_COMPLETED = 'completed';
+    const STATUS_CANCELLED = 'cancelled';
+
     protected $fillable = [
         'shipment_id',
         'created_by',
@@ -19,8 +25,10 @@ class Shipment extends Model
         'approved_at',
         'status',
         'notes',
+        'courier_notes',
         'priority',
         'deadline',
+        'scheduled_delivery_datetime',
         'surat_pengantar_kerja',
         'cancelled_by',     
         'cancelled_at',
@@ -66,14 +74,14 @@ class Shipment extends Model
         return $this->hasMany(ShipmentProgress::class);
     }
 
+    public function photos(): HasMany
+    {
+        return $this->hasMany(ShipmentPhoto::class);
+    }
+
     public function scopeUrgent($query)
     {
         return $query->where('priority', 'urgent');
-    }
-
-    public function scopeRegular($query)
-    {
-        return $query->where('priority', 'regular');
     }
 
     public function scopeByStatus($query, $status)

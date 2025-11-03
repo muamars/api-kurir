@@ -29,22 +29,6 @@ class NotificationService
         }
     }
 
-    public function shipmentApproved(Shipment $shipment): void
-    {
-        // Notify creator about approval
-        Notification::create([
-            'user_id' => $shipment->created_by,
-            'type' => 'shipment_approved',
-            'title' => 'Shipment Approved',
-            'message' => "Your shipment {$shipment->shipment_id} has been approved by {$shipment->approver->name}",
-            'data' => [
-                'shipment_id' => $shipment->id,
-                'shipment_number' => $shipment->shipment_id,
-                'approver' => $shipment->approver->name,
-            ]
-        ]);
-    }
-
     public function shipmentAssigned(Shipment $shipment): void
     {
         // Notify driver about assignment
@@ -74,6 +58,41 @@ class NotificationService
                 'shipment_number' => $shipment->shipment_id,
                 'driver' => $shipment->driver->name,
                 'driver_phone' => $shipment->driver->phone,
+            ]
+        ]);
+    }
+
+    public function shipmentPending(Shipment $shipment): void
+    {
+        // Notify new driver about pending assignment
+        if ($shipment->driver) {
+            Notification::create([
+                'user_id' => $shipment->assigned_driver_id,
+                'type' => 'shipment_pending',
+                'title' => 'New Delivery Assignment (Pending)',
+                'message' => "You have been assigned to deliver shipment {$shipment->shipment_id} (pending approval)",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'priority' => $shipment->priority,
+                    'destinations_count' => $shipment->destinations->count(),
+                    'deadline' => $shipment->deadline?->format('Y-m-d'),
+                ]
+            ]);
+        }
+
+        // Notify creator about driver reassignment
+        Notification::create([
+            'user_id' => $shipment->created_by,
+            'type' => 'driver_pending',
+            'title' => 'Driver Assigned (Pending)',
+            'message' => "Driver {$shipment->driver->name} has been assigned to your shipment {$shipment->shipment_id} (pending approval)",
+            'data' => [
+                'shipment_id' => $shipment->id,
+                'shipment_number' => $shipment->shipment_id,
+                'driver' => $shipment->driver->name,
+                'driver_phone' => $shipment->driver->phone,
+                'deadline' => $shipment->deadline?->format('Y-m-d'),
             ]
         ]);
     }
