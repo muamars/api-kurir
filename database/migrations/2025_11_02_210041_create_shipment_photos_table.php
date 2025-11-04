@@ -21,7 +21,6 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->timestamp('uploaded_at')->useCurrent();
             $table->timestamps();
-
             $table->index(['shipment_id', 'type']);
         });
     }
