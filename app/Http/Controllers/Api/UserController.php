@@ -36,11 +36,17 @@ class UserController extends Controller
             $query->role($request->role);
         }
 
-        if ($request->has('is_active')) {
-            $query->where('is_active', $request->boolean('is_active'));
-        } else {
-            $query->where('is_active', true);
-        }
+        // if ($request->has('is_active')) {
+        //     $query->where('is_active', $request->boolean('is_active'));
+        // } 
+        // else {
+        //     $query->where('is_active', true);
+        // }
+        // tambahan
+        if ($request->filled('is_active')) {
+                $query->where('is_active', filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN));
+            }
+
 
         $users = $query->get(['id', 'name', 'email', 'phone', 'division_id', 'is_active']);
 

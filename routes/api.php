@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\RoleController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Api\DivisionController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ShipmentPhotoController;
 
 // Authentication Routes (Public - tidak perlu token)
@@ -125,7 +127,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/roles/{role}/remove-permissions', [RoleController::class, 'removePermissions']);
 
             // Permissions
-            Route::apiResource('permissions', PermissionController::class);
+            Route::apiResource('permissions', PermissionController::class); 
             Route::get('/permissions-grouped', [PermissionController::class, 'getByGroup']);
         });
     });

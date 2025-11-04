@@ -110,7 +110,8 @@ class ShipmentController extends Controller
                 'notes' => $request->notes,
                 'courier_notes' => $request->courier_notes,
                 'priority' => $request->priority ?? 'regular',
-                'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
+                // 'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
+                'deadline' => $request->scheduled_delivery_datetime,
             ];
 
             $shipment = Shipment::create($shipmentData);
