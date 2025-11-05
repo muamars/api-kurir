@@ -28,7 +28,7 @@ class Shipment extends Model
         'courier_notes',
         'priority',
         'deadline',
-        'scheduled_delivery_datetime',
+        'scheduled_delivery_datetime',  
         'surat_pengantar_kerja',
         'cancelled_by',     
         'cancelled_at',
