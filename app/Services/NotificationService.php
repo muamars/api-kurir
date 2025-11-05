@@ -76,23 +76,27 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'priority' => $shipment->priority,
                     'destinations_count' => $shipment->destinations->count(),
-                    'deadline' => $shipment->deadline?->format('Y-m-d'),
+                    'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d'),
                 ]
             ]);
         }
 
-        // Notify creator about driver reassignment
+        // Notify creator about pending status
+        $message = $shipment->driver
+            ? "Driver {$shipment->driver->name} has been assigned to your shipment {$shipment->shipment_id} (pending approval)"
+            : "Your shipment {$shipment->shipment_id} is now pending approval";
+
         Notification::create([
             'user_id' => $shipment->created_by,
             'type' => 'driver_pending',
-            'title' => 'Driver Assigned (Pending)',
-            'message' => "Driver {$shipment->driver->name} has been assigned to your shipment {$shipment->shipment_id} (pending approval)",
+            'title' => 'Shipment Pending Approval',
+            'message' => $message,
             'data' => [
                 'shipment_id' => $shipment->id,
                 'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver->name,
-                'driver_phone' => $shipment->driver->phone,
-                'deadline' => $shipment->deadline?->format('Y-m-d'),
+                'driver' => $shipment->driver?->name,
+                'driver_phone' => $shipment->driver?->phone,
+                'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d H:i:s'),
             ]
         ]);
     }

@@ -164,9 +164,9 @@ class ShipmentController extends Controller
     {
         $this->authorize('approve-shipments');
 
-        if ($shipment->status !== 'created') {
+        if (!in_array($shipment->status, ['created', 'pending'])) {
             return response()->json([
-                'message' => 'Only created shipments can be approved'
+                'message' => 'Only created or pending shipments can be approved'
             ], 400);
         }
 
@@ -222,29 +222,27 @@ class ShipmentController extends Controller
     {
         $this->authorize('assign-drivers');
 
-        if ($shipment->status !== 'created') {
+        if (!in_array($shipment->status, ['created', 'pending'])) {
             return response()->json([
-                'message' => 'Only created shipments can be set to pending'
+                'message' => 'Only created or pending shipments can be set to pending'
             ], 400);
         }
 
         $request->validate([
-            'driver_id' => 'required|exists:users,id',
-            'deadline' => 'nullable|date'
+            'scheduled_delivery_datetime' => 'nullable|date_format:Y-m-d H:i:s'
         ]);
 
         $shipment->update([
-            'assigned_driver_id' => $request->driver_id,
             'status' => 'pending',
-            'deadline' => $request->deadline,
+            'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
         ]);
 
         // Send notification
-        app(NotificationService::class)->shipmentPending($shipment->fresh(['driver', 'creator']));
+        app(NotificationService::class)->shipmentPending($shipment->fresh(['creator']));
 
         return response()->json([
-            'message' => 'Shipment set to pending with driver assigned successfully',
-            'data' => $shipment->fresh(['driver'])
+            'message' => 'Shipment set to pending successfully',
+            'data' => $shipment->fresh(['creator'])
         ]);
     }
 
@@ -279,9 +277,9 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if ($shipment->status !== 'created') {
+        if (!in_array($shipment->status, ['created', 'pending'])) {
             return response()->json([
-                'message' => 'Only created shipments can be cancelled'
+                'message' => 'Only created or pending shipments can be cancelled'
             ], 400);
         }
 
