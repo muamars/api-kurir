@@ -104,7 +104,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
 
         // Shipment photos
-        Route::get('/shipments/{shipment}/photos', [ShipmentPhotoController::class, 'index']);
+        Route::get('/shipments/{shipment}/photos', [ShipmentPhotoController::class, 'index']); 
         Route::post('/shipments/{shipment}/photos/admin', [ShipmentPhotoController::class, 'uploadAdminPhotos']);
         Route::post('/shipments/{shipment}/photos/pickup', [ShipmentPhotoController::class, 'uploadPickupPhoto']);
         Route::post('/shipments/{shipment}/photos/delivery', [ShipmentPhotoController::class, 'uploadDeliveryPhoto']);
