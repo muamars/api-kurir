@@ -9,7 +9,7 @@ use App\Http\Resources\ShipmentPhotoResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
-use Intervention\Image\Facades\Image;
+use Intervention\Image\ImageManager;
 
 class ShipmentPhotoController extends Controller
 {
@@ -204,10 +204,17 @@ class ShipmentPhotoController extends Controller
         // Store original
         $originalPath = $file->storeAs($directory . '/originals', $filename, 'public');
 
+        // Ensure thumbnail directory exists
+        $thumbnailDir = storage_path('app/public/' . $directory . '/thumbnails');
+        if (!file_exists($thumbnailDir)) {
+            mkdir($thumbnailDir, 0755, true);
+        }
+
         // Create and store thumbnail
-        $image = Image::make($file);
+        $manager = ImageManager::gd();
+        $image = $manager->read($file);
         $thumbnailPath = $directory . '/thumbnails/' . $filename;
-        $image->fit(300, 300)->save(storage_path('app/public/' . $thumbnailPath));
+        $image->cover(300, 300)->save(storage_path('app/public/' . $thumbnailPath));
 
         return [
             'original' => $originalPath,
