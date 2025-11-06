@@ -110,6 +110,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/photos/delivery', [ShipmentPhotoController::class, 'uploadDeliveryPhoto']);
         Route::delete('/shipments/{shipment}/photos/{photo}', [ShipmentPhotoController::class, 'destroy']);
         
+        
 
         // Master data
         Route::get('/divisions', [DivisionController::class, 'index']);

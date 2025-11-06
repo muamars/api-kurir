@@ -107,7 +107,7 @@ class ShipmentController extends Controller
                 'shipment_id' => 'SPJ-' . date('Ymd') . '-' . Str::random(6),
                 'created_by' => auth()->id(),
                 'status' => 'created', // Default status when created
-                'notes' => $request->notes,
+                'notes' => $request->notes,                                 
                 'courier_notes' => $request->courier_notes,
                 'priority' => $request->priority ?? 'regular',
                 'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,

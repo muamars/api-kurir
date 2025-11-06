@@ -21,6 +21,9 @@ class ShipmentResource extends JsonResource
             'priority' => $this->priority,
             'notes' => $this->notes,
             'deadline' => $this->deadline?->format('Y-m-d H:i:s'),
+            'scheduled_delivery_datetime' => $this->scheduled_delivery_datetime
+            ? $this->scheduled_delivery_datetime->format('Y-m-d H:i:s')
+            : null,
             'created_at' => $this->created_at->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
             'approved_at' => $this->approved_at?->format('Y-m-d H:i:s'),

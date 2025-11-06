@@ -13,6 +13,7 @@ class ShipmentPhoto extends Model
     const TYPE_ADMIN_UPLOAD = 'admin_upload';
     const TYPE_PICKUP = 'pickup';
     const TYPE_DELIVERY = 'delivery';
+    
 
     protected $fillable = [
         'shipment_id',

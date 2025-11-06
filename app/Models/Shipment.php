@@ -37,6 +37,7 @@ class Shipment extends Model
     protected $casts = [
         'approved_at' => 'datetime',
         'deadline' => 'datetime',
+        'scheduled_delivery_datetime' => 'datetime', 
     ];
 
     // tambahan baru
