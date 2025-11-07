@@ -247,30 +247,62 @@ class ShipmentController extends Controller
         ]);
     }
 
+    // public function startDelivery(Shipment $shipment): JsonResponse
+    // {
+    //     if ($shipment->assigned_driver_id !== auth()->id()) {
+    //         return response()->json([
+    //             'message' => 'You are not assigned to this shipment'
+    //         ], 403);
+    //     }
+
+    //     if (!in_array($shipment->status, ['assigned', 'pending'])) {
+    //         return response()->json([
+    //             'message' => 'Shipment must be assigned or pending before starting delivery'
+    //         ], 400);
+    //     }
+
+    //     $shipment->update(['status' => 'in_progress']);
+
+    //     // Send notification
+    //     app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
+
+    //     return response()->json([
+    //         'message' => 'Delivery started successfully',
+    //         'data' => $shipment
+    //     ]);
+    // }
+
     public function startDelivery(Shipment $shipment): JsonResponse
-    {
-        if ($shipment->assigned_driver_id !== auth()->id()) {
+        {
+            if ($shipment->assigned_driver_id !== auth()->id()) {
+                return response()->json([
+                    'message' => 'You are not assigned to this shipment'
+                ], 403);
+            }
+
+            if (!in_array($shipment->status, ['assigned', 'pending'])) {
+                return response()->json([
+                    'message' => 'Shipment must be assigned or pending before starting delivery'
+                ], 400);
+            }
+
+            // 🔹 update shipment
+            $shipment->update(['status' => 'in_progress']);
+
+            // 🔹 update semua destinasi yg masih pending jadi in_progress/delivery
+            $shipment->destinations()
+                ->where('status', 'pending')
+                ->update(['status' => 'in_progress']);
+
+            // 🔹 kirim notifikasi
+            app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
+
             return response()->json([
-                'message' => 'You are not assigned to this shipment'
-            ], 403);
+                'message' => 'Delivery started successfully',
+                'data' => $shipment->load('destinations')
+            ]);
         }
 
-        if (!in_array($shipment->status, ['assigned', 'pending'])) {
-            return response()->json([
-                'message' => 'Shipment must be assigned or pending before starting delivery'
-            ], 400);
-        }
-
-        $shipment->update(['status' => 'in_progress']);
-
-        // Send notification
-        app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
-
-        return response()->json([
-            'message' => 'Delivery started successfully',
-            'data' => $shipment
-        ]);
-    }
 
     public function cancel(Request $request, Shipment $shipment): JsonResponse
     {
