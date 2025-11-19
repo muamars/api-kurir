@@ -11,13 +11,14 @@ return new class extends Migration
         Schema::create('shipment_destinations', function (Blueprint $table) {
             $table->id();
             $table->foreignId('shipment_id')->constrained()->onDelete('cascade');
+            $table->string('receiver_company'); // baru
             $table->string('receiver_name');
+            $table->string('receiver_contact'); // baru
             $table->text('delivery_address');
             $table->text('shipment_note')->nullable();
             $table->integer('sequence_order')->default(1); // Urutan pengiriman
             $table->enum('status', ['pending', 'in_progress', 'completed', 'failed'])->default('pending');
             $table->timestamps();
-
             $table->index(['shipment_id', 'sequence_order']);
         });
     }
