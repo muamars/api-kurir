@@ -19,8 +19,8 @@ class ShipmentPhotoFactory extends Factory
         return [
             'shipment_id' => \App\Models\Shipment::factory(),
             'type' => $this->faker->randomElement(['admin_upload', 'pickup', 'delivery']),
-            'photo_url' => 'shipments/' . $this->faker->numberBetween(1, 100) . '/originals/' . $this->faker->uuid() . '.jpg',
-            'photo_thumbnail' => 'shipments/' . $this->faker->numberBetween(1, 100) . '/thumbnails/' . $this->faker->uuid() . '.jpg',
+            'photo_url' => 'shipments/'.$this->faker->numberBetween(1, 100).'/originals/'.$this->faker->uuid().'.jpg',
+            'photo_thumbnail' => 'shipments/'.$this->faker->numberBetween(1, 100).'/thumbnails/'.$this->faker->uuid().'.jpg',
             'uploaded_by' => \App\Models\User::factory(),
             'notes' => $this->faker->optional()->sentence(),
             'uploaded_at' => $this->faker->dateTimeBetween('-1 week', 'now'),

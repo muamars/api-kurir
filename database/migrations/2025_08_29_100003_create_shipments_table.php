@@ -23,6 +23,7 @@ return new class extends Migration
             $table->timestamps();
             $table->index(['status', 'priority']);
             $table->index('assigned_driver_id');
+
         });
     }
 

@@ -2,12 +2,12 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Role;
-use Spatie\Permission\Models\Permission;
-use App\Models\User;
 use App\Models\Division;
+use App\Models\User;
+use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 
 class CourierTrackingSeeder extends Seeder
 {
@@ -19,7 +19,13 @@ class CourierTrackingSeeder extends Seeder
             ['name' => 'Store', 'description' => 'Store Division'],
             ['name' => 'Gudang', 'description' => 'Warehouse Division'],
             ['name' => 'Finance', 'description' => 'Finance Division'],
-            ['name' => 'Operations', 'description' => 'Operations Division'],
+            ['name' => 'Kurir', 'description' => 'Operations Division'],
+            ['name' => 'Marketing', 'description' => 'Marketing Division'],
+            ['name' => 'Finishing', 'description' => 'Finishing Division'],
+            ['name' => 'CGO', 'description' => 'Computer Graphics Operator Division'],
+            ['name' => 'Chasier/Cusromer Service', 'description' => 'Cusromer Servic and cashier Division'],
+            ['name' => 'HRD', 'description' => 'Operations Division'],
+            ['name' => 'Operator Indoor/Outdoor', 'description' => 'Operator Indoor/Outdoor Division'],
         ];
 
         foreach ($divisions as $division) {
@@ -76,7 +82,7 @@ class CourierTrackingSeeder extends Seeder
 
         // Create sample users
         $salesDivision = Division::where('name', 'Sales')->first();
-        $operationsDivision = Division::where('name', 'Operations')->first();
+        $kurirDivision = Division::where('name', 'Kurir')->first();
 
         // Admin user
         $admin = User::firstOrCreate(
@@ -84,7 +90,7 @@ class CourierTrackingSeeder extends Seeder
             [
                 'name' => 'Admin User',
                 'password' => Hash::make('password'),
-                'division_id' => $operationsDivision->id,
+                'division_id' => $kurirDivision->id ?? 1,
                 'phone' => '081234567890',
                 'is_active' => true,
             ]
@@ -97,7 +103,7 @@ class CourierTrackingSeeder extends Seeder
             [
                 'name' => 'Kurir User',
                 'password' => Hash::make('password'),
-                'division_id' => $operationsDivision->id,
+                'division_id' => $kurirDivision->id ?? 1,
                 'phone' => '081234567891',
                 'is_active' => true,
             ]
@@ -110,7 +116,7 @@ class CourierTrackingSeeder extends Seeder
             [
                 'name' => 'Regular User',
                 'password' => Hash::make('password'),
-                'division_id' => $salesDivision->id,
+                'division_id' => $salesDivision->id ?? 1,
                 'phone' => '081234567892',
                 'is_active' => true,
             ]

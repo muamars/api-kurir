@@ -12,7 +12,7 @@ class Blog extends Model
         'content',
         'slug',
         'is_published',
-        'user_id'
+        'user_id',
     ];
 
     protected $casts = [

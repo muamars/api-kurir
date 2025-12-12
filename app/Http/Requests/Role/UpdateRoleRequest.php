@@ -24,7 +24,7 @@ class UpdateRoleRequest extends FormRequest
         $roleId = $this->route('role');
 
         return [
-            'name' => 'required|string|max:255|unique:roles,name,' . $roleId,
+            'name' => 'required|string|max:255|unique:roles,name,'.$roleId,
             'permissions' => 'array',
             'permissions.*' => 'exists:permissions,name',
         ];
@@ -32,8 +32,6 @@ class UpdateRoleRequest extends FormRequest
 
     /**
      * Get custom messages for validator errors.
-     *
-     * @return array
      */
     public function messages(): array
     {

@@ -20,7 +20,7 @@ class UserController extends Controller
             ->get(['id', 'name', 'phone', 'division_id']);
 
         return response()->json([
-            'data' => $drivers
+            'data' => $drivers,
         ]);
     }
 
@@ -38,20 +38,19 @@ class UserController extends Controller
 
         // if ($request->has('is_active')) {
         //     $query->where('is_active', $request->boolean('is_active'));
-        // } 
+        // }
         // else {
         //     $query->where('is_active', true);
         // }
         // tambahan
         if ($request->filled('is_active')) {
-                $query->where('is_active', filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN));
-            }
-
+            $query->where('is_active', filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN));
+        }
 
         $users = $query->get(['id', 'name', 'email', 'phone', 'division_id', 'is_active']);
 
         return response()->json([
-            'data' => $users
+            'data' => $users,
         ]);
     }
 
@@ -75,14 +74,14 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User created successfully',
-            'data' => $user->load(['division', 'roles'])
+            'data' => $user->load(['division', 'roles']),
         ], 201);
     }
 
     public function show(User $user): JsonResponse
     {
         return response()->json([
-            'data' => $user->load(['division', 'roles'])
+            'data' => $user->load(['division', 'roles']),
         ]);
     }
 
@@ -99,7 +98,7 @@ class UserController extends Controller
         ];
 
         // Only update password if provided
-        if (!empty($validated['password'])) {
+        if (! empty($validated['password'])) {
             $updateData['password'] = Hash::make($validated['password']);
         }
 
@@ -112,7 +111,7 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'User updated successfully',
-            'data' => $user->fresh(['division', 'roles'])
+            'data' => $user->fresh(['division', 'roles']),
         ]);
     }
 
@@ -123,7 +122,7 @@ class UserController extends Controller
             $adminCount = User::role('Admin')->where('id', '!=', $user->id)->count();
             if ($adminCount === 0) {
                 return response()->json([
-                    'message' => 'Cannot delete the last admin user'
+                    'message' => 'Cannot delete the last admin user',
                 ], 400);
             }
         }
@@ -131,14 +130,97 @@ class UserController extends Controller
         // Prevent deleting self
         if ($user->id === auth()->id()) {
             return response()->json([
-                'message' => 'Cannot delete your own account'
+                'message' => 'Cannot delete your own account',
             ], 400);
         }
 
         $user->delete();
 
         return response()->json([
-            'message' => 'User deleted successfully'
+            'message' => 'User deleted successfully',
+        ]);
+    }
+
+    public function toggleActive(User $user): JsonResponse
+    {
+        // Prevent deactivating self
+        if ($user->id === auth()->id()) {
+            return response()->json([
+                'message' => 'Tidak dapat menonaktifkan akun Anda sendiri',
+            ], 400);
+        }
+
+        // Prevent deactivating the last active admin
+        if ($user->hasRole('Admin') && $user->is_active) {
+            $activeAdminCount = User::role('Admin')
+                ->where('id', '!=', $user->id)
+                ->where('is_active', true)
+                ->count();
+
+            if ($activeAdminCount === 0) {
+                return response()->json([
+                    'message' => 'Tidak dapat menonaktifkan admin terakhir yang aktif',
+                ], 400);
+            }
+        }
+
+        $user->is_active = ! $user->is_active;
+        $user->save();
+
+        $status = $user->is_active ? 'diaktifkan' : 'dinonaktifkan';
+
+        return response()->json([
+            'message' => "User berhasil {$status}",
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'is_active' => $user->is_active,
+            ],
+        ]);
+    }
+
+    public function toggleMyStatus(): JsonResponse
+    {
+        $user = auth()->user();
+
+        // Only allow Kurir to toggle their own status
+        if (! $user->hasRole('Kurir')) {
+            return response()->json([
+                'message' => 'Fitur ini hanya untuk kurir',
+            ], 403);
+        }
+
+        $user->is_active = ! $user->is_active;
+        $user->save();
+
+        $status = $user->is_active ? 'aktif' : 'nonaktif';
+        $message = $user->is_active
+            ? 'Status Anda sekarang aktif. Anda dapat menerima tugas pengiriman.'
+            : 'Status Anda sekarang nonaktif. Anda tidak akan menerima tugas pengiriman baru.';
+
+        return response()->json([
+            'message' => $message,
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'is_active' => $user->is_active,
+                'status' => $status,
+            ],
+        ]);
+    }
+
+    public function getMyStatus(): JsonResponse
+    {
+        $user = auth()->user();
+
+        return response()->json([
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'is_active' => $user->is_active,
+                'status' => $user->is_active ? 'aktif' : 'nonaktif',
+            ],
         ]);
     }
 }

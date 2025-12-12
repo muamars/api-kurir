@@ -16,7 +16,7 @@ class StoreRoleRequest extends FormRequest
         return [
             'name' => 'required|string|max:255|unique:roles,name',
             'permissions' => 'array',
-            'permissions.*' => 'exists:permissions,name'
+            'permissions.*' => 'exists:permissions,name',
         ];
     }
 
@@ -25,7 +25,7 @@ class StoreRoleRequest extends FormRequest
         return [
             'name.required' => 'Role name is required',
             'name.unique' => 'Role name already exists',
-            'permissions.*.exists' => 'One or more permissions do not exist'
+            'permissions.*.exists' => 'One or more permissions do not exist',
         ];
     }
 }

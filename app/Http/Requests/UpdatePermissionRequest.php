@@ -16,8 +16,8 @@ class UpdatePermissionRequest extends FormRequest
         $permissionId = $this->route('permission')->id;
 
         return [
-            'name' => 'required|string|max:255|unique:permissions,name,' . $permissionId,
-            'guard_name' => 'string|in:web,api'
+            'name' => 'required|string|max:255|unique:permissions,name,'.$permissionId,
+            'guard_name' => 'string|in:web,api',
         ];
     }
 
@@ -26,7 +26,7 @@ class UpdatePermissionRequest extends FormRequest
         return [
             'name.required' => 'Permission name is required',
             'name.unique' => 'Permission name already exists',
-            'guard_name.in' => 'Guard name must be either web or api'
+            'guard_name.in' => 'Guard name must be either web or api',
         ];
     }
 }

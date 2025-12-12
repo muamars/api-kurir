@@ -18,7 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
             'force.json' => \App\Http\Middleware\ForceJsonResponse::class,
         ]);
-        
+
         $middleware->api(append: [
             \App\Http\Middleware\ForceJsonResponse::class,
         ]);

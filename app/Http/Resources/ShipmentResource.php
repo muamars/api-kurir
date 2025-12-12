@@ -45,10 +45,25 @@ class ShipmentResource extends JsonResource
                 'phone' => $this->driver?->phone,
             ]),
 
+            'category' => $this->when($this->relationLoaded('category') && $this->category, [
+                'id' => $this->category?->id,
+                'name' => $this->category?->name,
+                'description' => $this->category?->description,
+            ]),
+
+            'vehicle_type' => $this->when($this->relationLoaded('vehicleType') && $this->vehicleType, [
+                'id' => $this->vehicleType?->id,
+                'name' => $this->vehicleType?->name,
+                'code' => $this->vehicleType?->code,
+                'description' => $this->vehicleType?->description,
+            ]),
+
             'destinations' => $this->destinations->map(function ($destination) {
                 return [
                     'id' => $destination->id,
+                    'receiver_company' => $destination->receiver_company,
                     'receiver_name' => $destination->receiver_name,
+                    'receiver_contact' => $destination->receiver_contact,
                     'delivery_address' => $destination->delivery_address,
                     'shipment_note' => $destination->shipment_note,
                     'sequence_order' => $destination->sequence_order,

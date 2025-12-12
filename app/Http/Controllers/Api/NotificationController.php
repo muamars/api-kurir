@@ -27,7 +27,7 @@ class NotificationController extends Controller
         $notifications = $query->paginate(20);
 
         return response()->json([
-            'data' => $notifications
+            'data' => $notifications,
         ]);
     }
 
@@ -39,8 +39,8 @@ class NotificationController extends Controller
 
         return response()->json([
             'data' => [
-                'unread_count' => $count
-            ]
+                'unread_count' => $count,
+            ],
         ]);
     }
 
@@ -48,7 +48,7 @@ class NotificationController extends Controller
     {
         if ($notification->user_id !== $request->user()->id) {
             return response()->json([
-                'message' => 'Unauthorized'
+                'message' => 'Unauthorized',
             ], 403);
         }
 
@@ -56,7 +56,7 @@ class NotificationController extends Controller
 
         return response()->json([
             'message' => 'Notification marked as read',
-            'data' => $notification
+            'data' => $notification,
         ]);
     }
 
@@ -69,8 +69,8 @@ class NotificationController extends Controller
         return response()->json([
             'message' => 'All notifications marked as read',
             'data' => [
-                'updated_count' => $updated
-            ]
+                'updated_count' => $updated,
+            ],
         ]);
     }
 
@@ -78,14 +78,14 @@ class NotificationController extends Controller
     {
         if ($notification->user_id !== $request->user()->id) {
             return response()->json([
-                'message' => 'Unauthorized'
+                'message' => 'Unauthorized',
             ], 403);
         }
 
         $notification->delete();
 
         return response()->json([
-            'message' => 'Notification deleted'
+            'message' => 'Notification deleted',
         ]);
     }
 }

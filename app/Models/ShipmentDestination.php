@@ -13,7 +13,10 @@ class ShipmentDestination extends Model
 
     protected $fillable = [
         'shipment_id',
+        'customer_id',
+        'receiver_company',
         'receiver_name',
+        'receiver_contact',
         'delivery_address',
         'shipment_note',
         'sequence_order',
@@ -23,6 +26,16 @@ class ShipmentDestination extends Model
     public function shipment(): BelongsTo
     {
         return $this->belongsTo(Shipment::class);
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function statusHistories(): HasMany
+    {
+        return $this->hasMany(DestinationStatusHistory::class, 'destination_id');
     }
 
     public function progress(): HasMany

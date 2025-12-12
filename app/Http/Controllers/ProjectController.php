@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Http\Requests\Project\StoreProjectRequest;
 use App\Http\Requests\Project\UpdateProjectRequest;
 use App\Models\Project;
-use Illuminate\Http\Request;
 
 class ProjectController extends Controller
 {
@@ -21,6 +20,7 @@ class ProjectController extends Controller
     public function index()
     {
         $projects = Project::with('user')->latest()->paginate(10);
+
         return view('projects.index', compact('projects'));
     }
 
@@ -61,6 +61,7 @@ class ProjectController extends Controller
     public function destroy(Project $project)
     {
         $project->delete();
+
         return redirect()->route('projects.index')->with('success', 'Project deleted successfully!');
     }
 
@@ -68,6 +69,7 @@ class ProjectController extends Controller
     public function apiIndex()
     {
         $projects = Project::with('user')->latest()->paginate(10);
+
         return response()->json($projects);
     }
 
@@ -98,6 +100,7 @@ class ProjectController extends Controller
     public function apiDestroy(Project $project)
     {
         $project->delete();
+
         return response()->json(['message' => 'Project deleted successfully']);
     }
 }

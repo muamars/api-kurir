@@ -24,7 +24,7 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'creator' => $shipment->creator->name,
                     'priority' => $shipment->priority,
-                ]
+                ],
             ]);
         }
     }
@@ -43,7 +43,7 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'priority' => $shipment->priority,
                     'destinations_count' => $shipment->destinations->count(),
-                ]
+                ],
             ]);
         }
 
@@ -58,7 +58,7 @@ class NotificationService
                 'shipment_number' => $shipment->shipment_id,
                 'driver' => $shipment->driver->name,
                 'driver_phone' => $shipment->driver->phone,
-            ]
+            ],
         ]);
     }
 
@@ -77,7 +77,7 @@ class NotificationService
                     'priority' => $shipment->priority,
                     'destinations_count' => $shipment->destinations->count(),
                     'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d'),
-                ]
+                ],
             ]);
         }
 
@@ -97,7 +97,7 @@ class NotificationService
                 'driver' => $shipment->driver?->name,
                 'driver_phone' => $shipment->driver?->phone,
                 'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d H:i:s'),
-            ]
+            ],
         ]);
     }
 
@@ -113,7 +113,7 @@ class NotificationService
                 'shipment_id' => $shipment->id,
                 'shipment_number' => $shipment->shipment_id,
                 'driver' => $shipment->driver->name,
-            ]
+            ],
         ]);
     }
 
@@ -130,7 +130,7 @@ class NotificationService
                 'shipment_number' => $shipment->shipment_id,
                 'driver' => $shipment->driver->name,
                 'completed_at' => now()->format('Y-m-d H:i:s'),
-            ]
+            ],
         ]);
 
         // Notify admins about completion
@@ -146,7 +146,7 @@ class NotificationService
                     'shipment_id' => $shipment->id,
                     'shipment_number' => $shipment->shipment_id,
                     'driver' => $shipment->driver->name,
-                ]
+                ],
             ]);
         }
     }
@@ -166,7 +166,7 @@ class NotificationService
                 'receiver_name' => $destination->receiver_name,
                 'delivery_address' => $destination->delivery_address,
                 'delivered_at' => $progress->progress_time->format('Y-m-d H:i:s'),
-            ]
+            ],
         ]);
     }
 
@@ -182,7 +182,7 @@ class NotificationService
                 'shipment_id' => $shipment->id,
                 'shipment_number' => $shipment->shipment_id,
                 'cancelled_by' => $shipment->cancelled_by,
-            ]
+            ],
         ]);
 
         // Notify assigned driver if exists
@@ -195,7 +195,7 @@ class NotificationService
                 'data' => [
                     'shipment_id' => $shipment->id,
                     'shipment_number' => $shipment->shipment_id,
-                ]
+                ],
             ]);
         }
 
@@ -211,7 +211,59 @@ class NotificationService
                     'shipment_id' => $shipment->id,
                     'shipment_number' => $shipment->shipment_id,
                     'cancelled_by' => $shipment->cancelled_by,
-                ]
+                ],
+            ]);
+        }
+    }
+
+    public function shipmentTakeover(Shipment $shipment, string $reason): void
+    {
+        // Notify creator about takeover
+        Notification::create([
+            'user_id' => $shipment->created_by,
+            'type' => 'shipment_takeover',
+            'title' => 'Shipment Takeover',
+            'message' => "Shipment {$shipment->shipment_id} telah di-takeover oleh driver. Alasan: {$reason}",
+            'data' => [
+                'shipment_id' => $shipment->id,
+                'shipment_number' => $shipment->shipment_id,
+                'driver' => $shipment->driver?->name,
+                'reason' => $reason,
+                'takeover_at' => now()->format('Y-m-d H:i:s'),
+            ],
+        ]);
+
+        // Notify all active admins
+        $admins = User::role('Admin')->where('is_active', true)->get();
+        foreach ($admins as $admin) {
+            Notification::create([
+                'user_id' => $admin->id,
+                'type' => 'shipment_takeover_admin',
+                'title' => 'Shipment Takeover',
+                'message' => "Shipment {$shipment->shipment_id} di-takeover oleh {$shipment->driver?->name}. Alasan: {$reason}",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'driver' => $shipment->driver?->name,
+                    'driver_phone' => $shipment->driver?->phone,
+                    'reason' => $reason,
+                    'takeover_at' => now()->format('Y-m-d H:i:s'),
+                ],
+            ]);
+        }
+
+        // Notify the driver who did takeover
+        if ($shipment->driver) {
+            Notification::create([
+                'user_id' => $shipment->driver->id,
+                'type' => 'shipment_takeover_driver',
+                'title' => 'Takeover Berhasil',
+                'message' => "Shipment {$shipment->shipment_id} telah dikembalikan ke admin untuk di-assign ulang",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'reason' => $reason,
+                ],
             ]);
         }
     }

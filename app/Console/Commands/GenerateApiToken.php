@@ -2,9 +2,9 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Console\Command;
 
 class GenerateApiToken extends Command
 {
@@ -39,8 +39,9 @@ class GenerateApiToken extends Command
         // Find user
         $user = User::where('email', $email)->first();
 
-        if (!$user) {
+        if (! $user) {
             $this->error("User with email '{$email}' not found!");
+
             return 1;
         }
 
@@ -55,31 +56,31 @@ class GenerateApiToken extends Command
 
         // Set expiration if specified
         if ($expires) {
-            $expirationDate = Carbon::now()->addDays((int)$expires);
+            $expirationDate = Carbon::now()->addDays((int) $expires);
             $tokenResult->accessToken->update([
-                'expires_at' => $expirationDate
+                'expires_at' => $expirationDate,
             ]);
 
             $this->info("Token will expire on: {$expirationDate->format('Y-m-d H:i:s')}");
         } else {
-            $this->info("Token is permanent (no expiration)");
+            $this->info('Token is permanent (no expiration)');
         }
 
         // Display user info
-        $this->info("Token generated for user:");
+        $this->info('Token generated for user:');
         $this->line("- Name: {$user->name}");
         $this->line("- Email: {$user->email}");
-        $this->line("- Roles: " . $user->getRoleNames()->implode(', '));
-        $this->line("- Division: " . ($user->division ? $user->division->name : 'None'));
+        $this->line('- Roles: '.$user->getRoleNames()->implode(', '));
+        $this->line('- Division: '.($user->division ? $user->division->name : 'None'));
 
         // Display token
         $this->newLine();
-        $this->info("API Token:");
+        $this->info('API Token:');
         $this->line($token);
 
         // Display usage example
         $this->newLine();
-        $this->info("Usage example:");
+        $this->info('Usage example:');
         $this->line("curl -H 'Authorization: Bearer {$token}' http://localhost:8000/api/v1/auth/me");
 
         return 0;

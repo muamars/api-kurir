@@ -14,6 +14,30 @@ class UpdateShipmentRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'category_id' => [
+                'nullable',
+                'exists:shipment_categories,id',
+                function ($attribute, $value, $fail) {
+                    if ($value) {
+                        $category = \App\Models\ShipmentCategory::find($value);
+                        if ($category && ! $category->is_active) {
+                            $fail('The selected category is not active.');
+                        }
+                    }
+                },
+            ],
+            'vehicle_type_id' => [
+                'nullable',
+                'exists:vehicle_types,id',
+                function ($attribute, $value, $fail) {
+                    if ($value) {
+                        $vehicleType = \App\Models\VehicleType::find($value);
+                        if ($vehicleType && ! $vehicleType->is_active) {
+                            $fail('The selected vehicle type is not active.');
+                        }
+                    }
+                },
+            ],
             'notes' => 'nullable|string',
             'priority' => 'nullable|in:regular,urgent',
             'deadline' => 'nullable|date|after:today',

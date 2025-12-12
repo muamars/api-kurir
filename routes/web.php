@@ -1,12 +1,12 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\AuthController;
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\BlogController;
-use App\Http\Controllers\ProjectController;
-use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\RoleController;
+use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BlogController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ProjectController;
+use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
@@ -21,13 +21,14 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
 // Debug route
-Route::get('/debug-dashboard', function() {
+Route::get('/debug-dashboard', function () {
     $user = auth()->user();
     $stats = [
         'blogs' => \App\Models\Blog::count(),
         'projects' => \App\Models\Project::count(),
         'users' => \App\Models\User::count(),
     ];
+
     return view('dashboard-debug', compact('stats'));
 })->middleware('auth')->name('debug-dashboard');
 

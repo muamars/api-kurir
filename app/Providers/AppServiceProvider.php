@@ -20,5 +20,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         date_default_timezone_set('Asia/Jakarta');
+
+        // Register Observer untuk auto-log status changes
+        \App\Models\ShipmentDestination::observe(\App\Observers\ShipmentDestinationObserver::class);
     }
 }

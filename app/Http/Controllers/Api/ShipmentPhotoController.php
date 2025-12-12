@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\ShipmentPhotoResource;
 use App\Models\Shipment;
 use App\Models\ShipmentPhoto;
-use App\Http\Resources\ShipmentPhotoResource;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Intervention\Image\ImageManager;
 
@@ -25,7 +25,7 @@ class ShipmentPhotoController extends Controller
 
         return response()->json([
             'message' => 'Shipment photos retrieved successfully',
-            'data' => ShipmentPhotoResource::collection($photos)
+            'data' => ShipmentPhotoResource::collection($photos),
         ]);
     }
 
@@ -39,7 +39,7 @@ class ShipmentPhotoController extends Controller
         $request->validate([
             'photos' => 'required|array|min:1|max:5',
             'photos.*' => 'required|file|image|mimes:jpeg,png,jpg|max:5120',
-            'notes' => 'nullable|string|max:500'
+            'notes' => 'nullable|string|max:500',
         ]);
 
         $uploadedPhotos = [];
@@ -61,7 +61,7 @@ class ShipmentPhotoController extends Controller
 
         return response()->json([
             'message' => 'Admin photos uploaded successfully',
-            'data' => $uploadedPhotos
+            'data' => $uploadedPhotos,
         ], 201);
     }
 
@@ -73,20 +73,20 @@ class ShipmentPhotoController extends Controller
         // Check if driver is assigned to this shipment
         if ($shipment->assigned_driver_id !== auth()->id()) {
             return response()->json([
-                'message' => 'You are not assigned to this shipment'
+                'message' => 'You are not assigned to this shipment',
             ], 403);
         }
 
         // Check if shipment is in correct status
-        if (!in_array($shipment->status, ['assigned', 'pending'])) {
+        if (! in_array($shipment->status, ['assigned', 'pending'])) {
             return response()->json([
-                'message' => 'Shipment must be assigned or pending to upload pickup photo'
+                'message' => 'Shipment must be assigned or pending to upload pickup photo',
             ], 400);
         }
 
         $request->validate([
             'photo' => 'required|image|mimes:jpeg,png,jpg|max:5120',
-            'notes' => 'nullable|string|max:500'
+            'notes' => 'nullable|string|max:500',
         ]);
 
         // Check if pickup photo already exists
@@ -96,7 +96,7 @@ class ShipmentPhotoController extends Controller
 
         if ($existingPickup) {
             return response()->json([
-                'message' => 'Pickup photo already uploaded for this shipment'
+                'message' => 'Pickup photo already uploaded for this shipment',
             ], 400);
         }
 
@@ -113,7 +113,7 @@ class ShipmentPhotoController extends Controller
 
         return response()->json([
             'message' => 'Pickup photo uploaded successfully',
-            'data' => $photo->load('uploader')
+            'data' => $photo->load('uploader'),
         ], 201);
     }
 
@@ -125,20 +125,20 @@ class ShipmentPhotoController extends Controller
         // Check if driver is assigned to this shipment
         if ($shipment->assigned_driver_id !== auth()->id()) {
             return response()->json([
-                'message' => 'You are not assigned to this shipment'
+                'message' => 'You are not assigned to this shipment',
             ], 403);
         }
 
         // Check if shipment is completed
         if ($shipment->status !== 'completed') {
             return response()->json([
-                'message' => 'Shipment must be completed to upload delivery photo'
+                'message' => 'Shipment must be completed to upload delivery photo',
             ], 400);
         }
 
         $request->validate([
             'photo' => 'required|image|mimes:jpeg,png,jpg|max:5120',
-            'notes' => 'nullable|string|max:500'
+            'notes' => 'nullable|string|max:500',
         ]);
 
         // Check if delivery photo already exists
@@ -148,7 +148,7 @@ class ShipmentPhotoController extends Controller
 
         if ($existingDelivery) {
             return response()->json([
-                'message' => 'Delivery photo already uploaded for this shipment'
+                'message' => 'Delivery photo already uploaded for this shipment',
             ], 400);
         }
 
@@ -165,7 +165,7 @@ class ShipmentPhotoController extends Controller
 
         return response()->json([
             'message' => 'Delivery photo uploaded successfully',
-            'data' => $photo->load('uploader')
+            'data' => $photo->load('uploader'),
         ], 201);
     }
 
@@ -175,22 +175,22 @@ class ShipmentPhotoController extends Controller
     public function destroy(Request $request, Shipment $shipment, ShipmentPhoto $photo): JsonResponse
     {
         // Check ownership or admin permission
-        if ($photo->uploaded_by !== auth()->id() && !$request->user()->can('approve-shipments')) {
+        if ($photo->uploaded_by !== auth()->id() && ! $request->user()->can('approve-shipments')) {
             return response()->json([
-                'message' => 'You can only delete your own photos'
+                'message' => 'You can only delete your own photos',
             ], 403);
         }
 
         // Delete files
         Storage::disk('public')->delete([
             $photo->photo_url,
-            $photo->photo_thumbnail
+            $photo->photo_thumbnail,
         ]);
 
         $photo->delete();
 
         return response()->json([
-            'message' => 'Photo deleted successfully'
+            'message' => 'Photo deleted successfully',
         ]);
     }
 
@@ -199,26 +199,26 @@ class ShipmentPhotoController extends Controller
      */
     private function storePhoto($file, string $directory): array
     {
-        $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+        $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
 
         // Store original
-        $originalPath = $file->storeAs($directory . '/originals', $filename, 'public');
+        $originalPath = $file->storeAs($directory.'/originals', $filename, 'public');
 
         // Ensure thumbnail directory exists
-        $thumbnailDir = storage_path('app/public/' . $directory . '/thumbnails');
-        if (!file_exists($thumbnailDir)) {
+        $thumbnailDir = storage_path('app/public/'.$directory.'/thumbnails');
+        if (! file_exists($thumbnailDir)) {
             mkdir($thumbnailDir, 0755, true);
         }
 
         // Create and store thumbnail
         $manager = ImageManager::gd();
         $image = $manager->read($file);
-        $thumbnailPath = $directory . '/thumbnails/' . $filename;
-        $image->cover(300, 300)->save(storage_path('app/public/' . $thumbnailPath));
+        $thumbnailPath = $directory.'/thumbnails/'.$filename;
+        $image->cover(300, 300)->save(storage_path('app/public/'.$thumbnailPath));
 
         return [
             'original' => $originalPath,
-            'thumbnail' => $thumbnailPath
+            'thumbnail' => $thumbnailPath,
         ];
     }
 }

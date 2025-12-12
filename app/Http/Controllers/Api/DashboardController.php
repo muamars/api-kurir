@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shipment;
-use App\Models\ShipmentProgress;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,7 +32,7 @@ class DashboardController extends Controller
         }
 
         return response()->json([
-            'data' => $stats
+            'data' => $stats,
         ]);
     }
 
@@ -42,7 +41,7 @@ class DashboardController extends Controller
         $query = Shipment::query();
 
         // Filter by user role
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -70,7 +69,7 @@ class DashboardController extends Controller
 
         $query = Shipment::query();
 
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -94,7 +93,7 @@ class DashboardController extends Controller
 
         $query = Shipment::query()->where('updated_at', '>=', $thisMonth);
 
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -184,7 +183,7 @@ class DashboardController extends Controller
         }
 
         return response()->json([
-            'data' => $data
+            'data' => $data,
         ]);
     }
 
@@ -195,7 +194,7 @@ class DashboardController extends Controller
 
         $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
 
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -216,7 +215,7 @@ class DashboardController extends Controller
             $result[] = [
                 'date' => $dateStr,
                 'day' => $date->format('l'),
-                'count' => $count
+                'count' => $count,
             ];
         }
 
@@ -230,7 +229,7 @@ class DashboardController extends Controller
 
         $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
 
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -252,7 +251,7 @@ class DashboardController extends Controller
 
         $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
 
-        if (!$user->hasRole('Admin')) {
+        if (! $user->hasRole('Admin')) {
             if ($user->hasRole('Kurir')) {
                 $query->where('assigned_driver_id', $user->id);
             } else {
@@ -268,7 +267,7 @@ class DashboardController extends Controller
                 return [
                     'month' => $item->month,
                     'month_name' => now()->month($item->month)->format('F'),
-                    'count' => $item->count
+                    'count' => $item->count,
                 ];
             })
             ->toArray();

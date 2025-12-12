@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Blog;
-use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use App\Http\Requests\Blog\StoreBlogRequest;
 use App\Http\Requests\Blog\UpdateBlogRequest;
+use App\Models\Blog;
+use Illuminate\Support\Str;
 
 class BlogController extends Controller
 {
@@ -22,6 +21,7 @@ class BlogController extends Controller
     public function index()
     {
         $blogs = Blog::with('user')->latest()->paginate(10);
+
         return view('blogs.index', compact('blogs'));
     }
 
@@ -64,6 +64,7 @@ class BlogController extends Controller
     public function destroy(Blog $blog)
     {
         $blog->delete();
+
         return redirect()->route('blogs.index')->with('success', 'Blog deleted successfully!');
     }
 
@@ -71,6 +72,7 @@ class BlogController extends Controller
     public function apiIndex()
     {
         $blogs = Blog::with('user')->latest()->paginate(10);
+
         return response()->json($blogs);
     }
 
@@ -102,6 +104,7 @@ class BlogController extends Controller
     public function apiDestroy(Blog $blog)
     {
         $blog->delete();
+
         return response()->json(['message' => 'Blog deleted successfully']);
     }
 }

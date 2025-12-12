@@ -10,20 +10,21 @@ use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
-
     public function login(LoginRequest $request): JsonResponse
     {
-        if (!Auth::attempt($request->validated())) {
+        if (! Auth::attempt($request->validated())) {
             return response()->json([
-                'message' => 'Invalid credentials'
+                'message' => 'Invalid credentials',
             ], 401);
         }
 
         $user = Auth::user();
 
-        if (!$user->is_active) {
+        // Only block login for non-Kurir users when inactive
+        // Kurir can login even when inactive to toggle their status
+        if (! $user->is_active && ! $user->hasRole('Kurir')) {
             return response()->json([
-                'message' => 'Account is inactive'
+                'message' => 'Akun Anda telah dinonaktifkan. Silakan hubungi administrator.',
             ], 403);
         }
 
@@ -37,25 +38,24 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'phone' => $user->phone,
+                    'is_active' => $user->is_active,
                     'division' => $user->division,
                     'roles' => $user->getRoleNames(),
                     'permissions' => $user->getAllPermissions()->pluck('name'),
                 ],
                 'token' => $token,
-            ]
+            ],
         ]);
     }
-
 
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([
-            'message' => 'Logout successful'
+            'message' => 'Logout successful',
         ]);
     }
-
 
     public function me(Request $request): JsonResponse
     {
@@ -67,10 +67,11 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'is_active' => $user->is_active,
                 'division' => $user->division,
                 'roles' => $user->getRoleNames(),
                 'permissions' => $user->getAllPermissions()->pluck('name'),
-            ]
+            ],
         ]);
     }
 
@@ -80,34 +81,35 @@ class AuthController extends Controller
     public function generateTestToken(Request $request): JsonResponse
     {
         // Only allow in development/testing environment
-        if (!app()->environment(['local', 'testing'])) {
+        if (! app()->environment(['local', 'testing'])) {
             return response()->json([
-                'message' => 'Token generation only available in development environment'
+                'message' => 'Token generation only available in development environment',
             ], 403);
         }
 
         $request->validate([
             'email' => 'required|email|exists:users,email',
             'token_name' => 'string|max:255',
-            'expires_in_days' => 'nullable|integer|min:1|max:365'
+            'expires_in_days' => 'nullable|integer|min:1|max:365',
         ]);
 
         $user = \App\Models\User::where('email', $request->email)->first();
 
-        if (!$user->is_active) {
+        // Only block token generation for non-Kurir users when inactive
+        if (! $user->is_active && ! $user->hasRole('Kurir')) {
             return response()->json([
-                'message' => 'User account is inactive'
+                'message' => 'User account is inactive',
             ], 403);
         }
 
-        $tokenName = $request->token_name ?? 'test-token-' . now()->format('Y-m-d-H-i-s');
+        $tokenName = $request->token_name ?? 'test-token-'.now()->format('Y-m-d-H-i-s');
         $tokenResult = $user->createToken($tokenName, ['*']);
 
         // Set expiration if specified
         if ($request->expires_in_days) {
             $expirationDate = now()->addDays($request->expires_in_days);
             $tokenResult->accessToken->update([
-                'expires_at' => $expirationDate
+                'expires_at' => $expirationDate,
             ]);
         }
 
@@ -125,8 +127,8 @@ class AuthController extends Controller
                 'token_name' => $tokenName,
                 'expires_at' => $request->expires_in_days ?
                     now()->addDays($request->expires_in_days)->toISOString() : null,
-                'is_permanent' => !$request->expires_in_days
-            ]
+                'is_permanent' => ! $request->expires_in_days,
+            ],
         ]);
     }
 }

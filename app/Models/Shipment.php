@@ -12,9 +12,13 @@ class Shipment extends Model
     use HasFactory;
 
     const STATUS_CREATED = 'created';
+
     const STATUS_ASSIGNED = 'assigned';
+
     const STATUS_IN_PROGRESS = 'in_progress';
+
     const STATUS_COMPLETED = 'completed';
+
     const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
@@ -22,26 +26,27 @@ class Shipment extends Model
         'created_by',
         'approved_by',
         'assigned_driver_id',
+        'category_id',
+        'vehicle_type_id',
         'approved_at',
         'status',
         'notes',
         'courier_notes',
         'priority',
         'deadline',
-        'scheduled_delivery_datetime',  
+        'scheduled_delivery_datetime',
         'surat_pengantar_kerja',
-        'cancelled_by',     
+        'cancelled_by',
         'cancelled_at',
     ];
 
     protected $casts = [
         'approved_at' => 'datetime',
         'deadline' => 'datetime',
-        'scheduled_delivery_datetime' => 'datetime', 
+        'scheduled_delivery_datetime' => 'datetime',
     ];
 
     // tambahan baru
-
 
     // batas
 
@@ -80,6 +85,16 @@ class Shipment extends Model
         return $this->hasMany(ShipmentPhoto::class);
     }
 
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ShipmentCategory::class, 'category_id');
+    }
+
+    public function vehicleType(): BelongsTo
+    {
+        return $this->belongsTo(VehicleType::class, 'vehicle_type_id');
+    }
+
     public function scopeUrgent($query)
     {
         return $query->where('priority', 'urgent');
@@ -99,5 +114,4 @@ class Shipment extends Model
     {
         return $this->belongsTo(User::class, 'cancelled_by');
     }
-
 }

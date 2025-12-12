@@ -8,7 +8,6 @@ use App\Http\Requests\UpdateRoleRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Spatie\Permission\Models\Role;
-use Spatie\Permission\Models\Permission;
 
 class RoleController extends Controller
 {
@@ -17,7 +16,7 @@ class RoleController extends Controller
         $roles = Role::with('permissions')->get();
 
         return response()->json([
-            'data' => $roles
+            'data' => $roles,
         ]);
     }
 
@@ -32,14 +31,14 @@ class RoleController extends Controller
 
         return response()->json([
             'message' => 'Role created successfully',
-            'data' => $role->load('permissions')
+            'data' => $role->load('permissions'),
         ], 201);
     }
 
     public function show(Role $role): JsonResponse
     {
         return response()->json([
-            'data' => $role->load('permissions')
+            'data' => $role->load('permissions'),
         ]);
     }
 
@@ -54,7 +53,7 @@ class RoleController extends Controller
 
         return response()->json([
             'message' => 'Role updated successfully',
-            'data' => $role->load('permissions')
+            'data' => $role->load('permissions'),
         ]);
     }
 
@@ -63,14 +62,14 @@ class RoleController extends Controller
         // Prevent deletion of default roles
         if (in_array($role->name, ['Admin', 'Kurir', 'User'])) {
             return response()->json([
-                'message' => 'Cannot delete default roles'
+                'message' => 'Cannot delete default roles',
             ], 400);
         }
 
         $role->delete();
 
         return response()->json([
-            'message' => 'Role deleted successfully'
+            'message' => 'Role deleted successfully',
         ]);
     }
 
@@ -78,14 +77,14 @@ class RoleController extends Controller
     {
         $request->validate([
             'permissions' => 'required|array',
-            'permissions.*' => 'exists:permissions,name'
+            'permissions.*' => 'exists:permissions,name',
         ]);
 
         $role->syncPermissions($request->permissions);
 
         return response()->json([
             'message' => 'Permissions assigned successfully',
-            'data' => $role->load('permissions')
+            'data' => $role->load('permissions'),
         ]);
     }
 
@@ -93,14 +92,14 @@ class RoleController extends Controller
     {
         $request->validate([
             'permissions' => 'required|array',
-            'permissions.*' => 'exists:permissions,name'
+            'permissions.*' => 'exists:permissions,name',
         ]);
 
         $role->revokePermissionTo($request->permissions);
 
         return response()->json([
             'message' => 'Permissions removed successfully',
-            'data' => $role->load('permissions')
+            'data' => $role->load('permissions'),
         ]);
     }
 }

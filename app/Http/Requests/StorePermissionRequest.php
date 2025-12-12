@@ -15,7 +15,7 @@ class StorePermissionRequest extends FormRequest
     {
         return [
             'name' => 'required|string|max:255|unique:permissions,name',
-            'guard_name' => 'string|in:web,api'
+            'guard_name' => 'string|in:web,api',
         ];
     }
 
@@ -24,7 +24,7 @@ class StorePermissionRequest extends FormRequest
         return [
             'name.required' => 'Permission name is required',
             'name.unique' => 'Permission name already exists',
-            'guard_name.in' => 'Guard name must be either web or api'
+            'guard_name.in' => 'Guard name must be either web or api',
         ];
     }
 }

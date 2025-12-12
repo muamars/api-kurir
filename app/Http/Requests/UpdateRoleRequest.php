@@ -16,9 +16,9 @@ class UpdateRoleRequest extends FormRequest
         $roleId = $this->route('role')->id;
 
         return [
-            'name' => 'required|string|max:255|unique:roles,name,' . $roleId,
+            'name' => 'required|string|max:255|unique:roles,name,'.$roleId,
             'permissions' => 'array',
-            'permissions.*' => 'exists:permissions,name'
+            'permissions.*' => 'exists:permissions,name',
         ];
     }
 
@@ -27,7 +27,7 @@ class UpdateRoleRequest extends FormRequest
         return [
             'name.required' => 'Role name is required',
             'name.unique' => 'Role name already exists',
-            'permissions.*.exists' => 'One or more permissions do not exist'
+            'permissions.*.exists' => 'One or more permissions do not exist',
         ];
     }
 }

@@ -18,8 +18,8 @@ class ShipmentPhotoResource extends JsonResource
             'id' => $this->id,
             'shipment_id' => $this->shipment_id,
             'type' => $this->type,
-            'photo_url' => asset('storage/' . $this->photo_url),
-            'photo_thumbnail' => $this->photo_thumbnail ? asset('storage/' . $this->photo_thumbnail) : null,
+            'photo_url' => asset('storage/'.$this->photo_url),
+            'photo_thumbnail' => $this->photo_thumbnail ? asset('storage/'.$this->photo_thumbnail) : null,
             'notes' => $this->notes,
             'uploaded_by' => [
                 'id' => $this->uploader->id,
