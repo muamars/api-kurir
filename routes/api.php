@@ -94,7 +94,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/destinations/{destination}/progress', [ShipmentProgressController::class, 'updateProgress']);
         Route::get('/shipments/{shipment}/progress', [ShipmentProgressController::class, 'getProgress']);
         Route::get('/shipments/{shipment}/destinations/{destination}/status-history', [ShipmentProgressController::class, 'getDestinationStatusHistory']);
-        Route::get('/shipments/{shipment}/destinations/{destination}/ordered-history', [ShipmentProgressController::class, 'getOrderedStatusHistory']);
         Route::get('/shipments/{shipment}/destinations/{destination}/status-duration', [ShipmentProgressController::class, 'getStatusDuration']);
         Route::get('/shipments/{shipment}/destinations/{destination}/all-durations', [ShipmentProgressController::class, 'getAllStatusDurations']);
         Route::get('/driver/history', [ShipmentProgressController::class, 'getDriverHistory']);

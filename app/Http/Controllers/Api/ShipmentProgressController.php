@@ -460,64 +460,7 @@ class ShipmentProgressController extends Controller
         ]);
     }
 
-    public function getOrderedStatusHistory(Shipment $shipment, ShipmentDestination $destination): JsonResponse
-    {
-        // Ambil semua history untuk destination ini, urutkan berdasarkan waktu ASC (dari awal ke akhir)
-        $histories = $destination->statusHistories()
-            ->with('changedBy')
-            ->orderBy('changed_at', 'asc')
-            ->get();
 
-        // Status flow yang benar berurutan dari pending ke finished
-        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered', 'completed', 'returning', 'finished'];
-        
-        $orderedHistory = [];
-        $statusHistoryMap = [];
-
-        // Buat map history berdasarkan new_status
-        foreach ($histories as $history) {
-            $statusHistoryMap[$history->new_status] = $history;
-        }
-
-        // Buat history berurutan sesuai flow dari pending ke finished
-        $idCounter = 146; // Start dari ID yang kamu contohkan
-        for ($i = 0; $i < count($statusFlow) - 1; $i++) {
-            $fromStatus = $statusFlow[$i];
-            $toStatus = $statusFlow[$i + 1];
-
-            // Cek apakah ada transisi ke toStatus
-            if (isset($statusHistoryMap[$toStatus])) {
-                $history = $statusHistoryMap[$toStatus];
-                
-                $orderedHistory[] = [
-                    'id' => $idCounter + $i,
-                    'old_status' => $fromStatus,
-                    'new_status' => $toStatus,
-                    'old_status_label' => $this->getStatusLabel($fromStatus),
-                    'new_status_label' => $this->getStatusLabel($toStatus),
-                    'status_description' => $this->getStatusDescription($fromStatus, $toStatus),
-                    'note' => $history->note,
-                    'changed_at' => $history->changed_at->format('Y-m-d H:i:s'),
-                    'changed_by' => $history->changedBy ? [
-                        'id' => $history->changedBy->id,
-                        'name' => $history->changedBy->name,
-                    ] : null,
-                ];
-            }
-        }
-
-        // Reverse array agar urutan dari finished ke pending (seperti contoh yang kamu mau)
-        $orderedHistory = array_reverse($orderedHistory);
-
-        return response()->json([
-            'data' => $orderedHistory,
-            'summary' => [
-                'total_steps' => count($orderedHistory),
-                'current_status' => $destination->status,
-                'current_status_label' => $this->getStatusLabel($destination->status),
-            ],
-        ]);
-    }
 
     public function getAllStatusDurations(Shipment $shipment, ShipmentDestination $destination): JsonResponse
     {
