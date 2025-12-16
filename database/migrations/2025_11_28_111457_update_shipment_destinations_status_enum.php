@@ -10,10 +10,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // PostgreSQL: Drop old enum and create new one
-        DB::statement('ALTER TABLE shipment_destinations DROP CONSTRAINT IF EXISTS shipment_destinations_status_check');
-        DB::statement('ALTER TABLE shipment_destinations ALTER COLUMN status TYPE VARCHAR(50)');
-        DB::statement("ALTER TABLE shipment_destinations ADD CONSTRAINT shipment_destinations_status_check CHECK (status IN ('pending', 'picked', 'in_progress', 'completed', 'returning', 'finished', 'failed'))");
+        // MySQL/MariaDB: Modify column type
+        DB::statement('ALTER TABLE shipment_destinations MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT "pending"');
+
+        // Note: MySQL/MariaDB doesn't support CHECK constraints like PostgreSQL
+        // Validation will be handled at application level
     }
 
     /**
@@ -21,7 +22,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement('ALTER TABLE shipment_destinations DROP CONSTRAINT IF EXISTS shipment_destinations_status_check');
-        DB::statement("ALTER TABLE shipment_destinations ADD CONSTRAINT shipment_destinations_status_check CHECK (status IN ('pending', 'in_progress', 'completed', 'failed'))");
+        // MySQL/MariaDB: Revert column type
+        DB::statement('ALTER TABLE shipment_destinations MODIFY COLUMN status ENUM("pending", "in_progress", "completed", "failed") NOT NULL DEFAULT "pending"');
+
+        // Note: MySQL/MariaDB doesn't support CHECK constraints like PostgreSQL
+        // Validation will be handled at application level
     }
 };

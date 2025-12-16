@@ -10,9 +10,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Add 'takeover' status to enum
-        DB::statement('ALTER TABLE shipment_destinations DROP CONSTRAINT IF EXISTS shipment_destinations_status_check');
-        DB::statement("ALTER TABLE shipment_destinations ADD CONSTRAINT shipment_destinations_status_check CHECK (status IN ('pending', 'picked', 'in_progress', 'delivered', 'completed', 'returning', 'finished', 'takeover', 'failed'))");
+        // MySQL/MariaDB: No CHECK constraints needed
+        // Status validation will be handled at application level
+        // The column is already VARCHAR(50) from previous migration
     }
 
     /**
@@ -20,7 +20,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement('ALTER TABLE shipment_destinations DROP CONSTRAINT IF EXISTS shipment_destinations_status_check');
-        DB::statement("ALTER TABLE shipment_destinations ADD CONSTRAINT shipment_destinations_status_check CHECK (status IN ('pending', 'picked', 'in_progress', 'completed', 'returning', 'finished', 'failed'))");
+        // MySQL/MariaDB: No CHECK constraints to remove
+        // Status validation will be handled at application level
     }
 };

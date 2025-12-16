@@ -10,13 +10,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // PostgreSQL: Drop old enum constraint and create new one
-        DB::statement('ALTER TABLE shipment_progress DROP CONSTRAINT IF EXISTS shipment_progress_status_check');
-        DB::statement('ALTER TABLE shipment_progress ALTER COLUMN status TYPE VARCHAR(50)');
-        DB::statement("ALTER TABLE shipment_progress ADD CONSTRAINT shipment_progress_status_check CHECK (status IN ('picked', 'arrived', 'delivered', 'returning', 'finished', 'failed'))");
+        // MySQL/MariaDB: Modify column type and default
+        DB::statement('ALTER TABLE shipment_progress MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT "picked"');
 
-        // Update default value
-        DB::statement("ALTER TABLE shipment_progress ALTER COLUMN status SET DEFAULT 'picked'");
+        // Note: MySQL/MariaDB doesn't support CHECK constraints like PostgreSQL
+        // Validation will be handled at application level
     }
 
     /**
@@ -24,8 +22,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement('ALTER TABLE shipment_progress DROP CONSTRAINT IF EXISTS shipment_progress_status_check');
-        DB::statement("ALTER TABLE shipment_progress ADD CONSTRAINT shipment_progress_status_check CHECK (status IN ('arrived', 'delivered', 'failed'))");
-        DB::statement("ALTER TABLE shipment_progress ALTER COLUMN status SET DEFAULT 'arrived'");
+        // MySQL/MariaDB: Revert column type and default
+        DB::statement('ALTER TABLE shipment_progress MODIFY COLUMN status ENUM("arrived", "delivered", "failed") NOT NULL DEFAULT "arrived"');
+
+        // Note: MySQL/MariaDB doesn't support CHECK constraints like PostgreSQL
+        // Validation will be handled at application level
     }
 };
