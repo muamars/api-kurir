@@ -13,33 +13,33 @@ Route::get('/', function () {
 });
 
 // Authentication Routes
-Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+// Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
+// Route::post('/login', [AuthController::class, 'login']);
+// Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
-// Dashboard
-Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+// // Dashboard
+// Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-// Debug route
-Route::get('/debug-dashboard', function () {
-    $user = auth()->user();
-    $stats = [
-        'blogs' => \App\Models\Blog::count(),
-        'projects' => \App\Models\Project::count(),
-        'users' => \App\Models\User::count(),
-    ];
+// // Debug route
+// Route::get('/debug-dashboard', function () {
+//     $user = auth()->user();
+//     $stats = [
+//         'blogs' => \App\Models\Blog::count(),
+//         'projects' => \App\Models\Project::count(),
+//         'users' => \App\Models\User::count(),
+//     ];
 
-    return view('dashboard-debug', compact('stats'));
-})->middleware('auth')->name('debug-dashboard');
+//     return view('dashboard-debug', compact('stats'));
+// })->middleware('auth')->name('debug-dashboard');
 
-// Blog Routes
-Route::resource('blogs', BlogController::class);
+// // Blog Routes
+// Route::resource('blogs', BlogController::class);
 
-// Project Routes
-Route::resource('projects', ProjectController::class);
+// // Project Routes
+// Route::resource('projects', ProjectController::class);
 
-// Admin Routes
-Route::prefix('admin')->name('admin.')->group(function () {
-    Route::resource('users', UserController::class);
-    Route::resource('roles', RoleController::class);
-});
+// // Admin Routes
+// Route::prefix('admin')->name('admin.')->group(function () {
+//     Route::resource('users', UserController::class);
+//     Route::resource('roles', RoleController::class);
+// });
