@@ -52,8 +52,8 @@ class ShipmentProgressController extends Controller
             'completed' => ['returning'],
             'returning' => ['finished'],
             'finished' => [], // Status final
-            'takeover' => [], // Status final (kembali ke admin)
-            'failed' => [], // Status final
+            'takeover' => [], // Status final - akan di-reset ke pending otomatis
+            'failed' => ['picked'], // Setelah failed, bisa retry pickup
         ];
 
         $currentStatus = $destination->status;
@@ -196,10 +196,17 @@ class ShipmentProgressController extends Controller
 
             // === Handle status TAKEOVER: kembalikan ke admin ===
             if ($request->status === 'takeover') {
+                // Update shipment: kembali ke pending, unassign driver
                 $shipment->update([
                     'status' => 'pending',
                     'assigned_driver_id' => null,
                 ]);
+
+                // PENTING: Reset semua destination yang belum selesai kembali ke pending
+                // agar driver baru bisa pickup lagi
+                $shipment->destinations()
+                    ->whereNotIn('status', ['completed', 'finished'])
+                    ->update(['status' => 'pending']);
 
                 try {
                     app(NotificationService::class)->shipmentTakeover(
