@@ -63,11 +63,11 @@ class ShipmentController extends Controller
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
-                $q->where('shipment_id', 'ILIKE', "%{$search}%")
-                    ->orWhere('notes', 'ILIKE', "%{$search}%")
+                $q->where('shipment_id', 'LIKE', "%{$search}%")
+                    ->orWhere('notes', 'LIKE', "%{$search}%")
                     ->orWhereHas('destinations', function ($destQuery) use ($search) {
-                        $destQuery->where('receiver_name', 'ILIKE', "%{$search}%")
-                            ->orWhere('delivery_address', 'ILIKE', "%{$search}%");
+                        $destQuery->where('receiver_name', 'LIKE', "%{$search}%")
+                            ->orWhere('delivery_address', 'LIKE', "%{$search}%");
                     });
             });
         }
