@@ -63,11 +63,11 @@ class ShipmentController extends Controller
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
-                $q->where('shipment_id', 'ILIKE', "%{$search}%")
-                    ->orWhere('notes', 'ILIKE', "%{$search}%")
+                $q->where('shipment_id', 'LIKE', "%{$search}%")
+                    ->orWhere('notes', 'LIKE', "%{$search}%")
                     ->orWhereHas('destinations', function ($destQuery) use ($search) {
-                        $destQuery->where('receiver_name', 'ILIKE', "%{$search}%")
-                            ->orWhere('delivery_address', 'ILIKE', "%{$search}%");
+                        $destQuery->where('receiver_name', 'LIKE', "%{$search}%")
+                            ->orWhere('delivery_address', 'LIKE', "%{$search}%");
                     });
             });
         }
@@ -105,7 +105,23 @@ class ShipmentController extends Controller
         $perPage = $request->get('per_page', 50);
         $shipments = $query->paginate($perPage);
 
-        return response()->json(ShipmentResource::collection($shipments));
+        return response()->json([
+            'data' => ShipmentResource::collection($shipments->items()),
+            'pagination' => [
+                'current_page' => $shipments->currentPage(),
+                'last_page' => $shipments->lastPage(),
+                'per_page' => $shipments->perPage(),
+                'total' => $shipments->total(),
+                'from' => $shipments->firstItem(),
+                'to' => $shipments->lastItem(),
+            ],
+            'links' => [
+                'first' => $shipments->url(1),
+                'last' => $shipments->url($shipments->lastPage()),
+                'prev' => $shipments->previousPageUrl(),
+                'next' => $shipments->nextPageUrl(),
+            ]
+        ]);
     }
 
     public function store(StoreShipmentRequest $request): JsonResponse
