@@ -46,6 +46,14 @@ class Shipment extends Model
         'scheduled_delivery_datetime' => 'datetime',
     ];
 
+    /**
+     * Get the route key for the model.
+     */
+    public function getRouteKeyName(): string
+    {
+        return 'shipment_id';
+    }
+
     // tambahan baru
 
     // batas
