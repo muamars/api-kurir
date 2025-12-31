@@ -73,6 +73,19 @@ class ShipmentProgressController extends Controller
             ], 400);
         }
 
+        // 🔑 NEW RULES ENGINE - Multi-Package Workflow Logic
+        if (in_array($newStatus, ['completed', 'returning', 'finished'])) {
+            $multiPackageValidation = $this->validateMultiPackageWorkflow($shipment, $destination, $newStatus);
+            if (!$multiPackageValidation['allowed']) {
+                return response()->json([
+                    'message' => $multiPackageValidation['message'],
+                    'rule' => $multiPackageValidation['rule'],
+                    'current_package_info' => $multiPackageValidation['package_info'],
+                    'workflow_explanation' => $multiPackageValidation['explanation'],
+                ], 400);
+            }
+        }
+
         // Validasi: Pickup bisa dilakukan saat shipment status = assigned atau in_progress
         if ($request->status === 'picked' && ! in_array($shipment->status, ['assigned', 'in_progress'])) {
             return response()->json([
@@ -1094,7 +1107,136 @@ class ShipmentProgressController extends Controller
         }
     }
 
+    /**
+     * 🔑 Multi-Package Workflow Rules Engine
+     * 
+     * Rule A: Kurir hanya punya 1 paket → Full cycle sampai finished
+     * Rule B: Kurir punya > 1 paket → Paket 1 & 2 mentok di delivered, 
+     *         hanya paket terakhir yang bisa returning → finished
+     */
+    private function validateMultiPackageWorkflow($shipment, $destination, $requestedStatus): array
+    {
+        // Get all destinations assigned to this driver that are still active
+        $driverDestinations = ShipmentDestination::whereHas('shipment', function ($query) {
+            $query->where('assigned_driver_id', auth()->id())
+                  ->whereIn('status', ['assigned', 'in_progress']);
+        })
+        ->whereIn('status', ['pending', 'picked', 'in_progress', 'arrived', 'delivered'])
+        ->orderBy('id')
+        ->get();
 
+        $totalPackages = $driverDestinations->count();
+        $currentPackageIndex = $driverDestinations->search(function ($dest) use ($destination) {
+            return $dest->id === $destination->id;
+        });
+
+        // Jika tidak ditemukan dalam active destinations, cek apakah ini destination yang sudah delivered
+        if ($currentPackageIndex === false) {
+            $currentDestination = ShipmentDestination::find($destination->id);
+            if ($currentDestination && $currentDestination->status === 'delivered') {
+                // Ini adalah destination yang sudah delivered, cek apakah ini yang terakhir
+                $remainingDestinations = ShipmentDestination::whereHas('shipment', function ($query) {
+                    $query->where('assigned_driver_id', auth()->id())
+                          ->whereIn('status', ['assigned', 'in_progress']);
+                })
+                ->whereIn('status', ['pending', 'picked', 'in_progress', 'arrived'])
+                ->count();
+
+                $isLastPackage = $remainingDestinations === 0;
+                
+                return [
+                    'allowed' => $isLastPackage,
+                    'message' => $isLastPackage 
+                        ? 'Allowed: This is the last package, can proceed to next status'
+                        : 'Not allowed: You still have other packages to deliver first',
+                    'rule' => $isLastPackage ? 'Rule A: Last package' : 'Rule B: Multi-package restriction',
+                    'package_info' => [
+                        'current_package_position' => 'Last delivered package',
+                        'remaining_packages' => $remainingDestinations,
+                        'is_last_package' => $isLastPackage,
+                    ],
+                    'explanation' => $isLastPackage 
+                        ? 'Ini adalah paket terakhir, boleh lanjut ke returning → finished'
+                        : 'Masih ada paket lain yang belum selesai, harus diselesaikan dulu'
+                ];
+            }
+        }
+
+        $isLastPackage = ($currentPackageIndex !== false) && ($currentPackageIndex === $totalPackages - 1);
+
+        // Rule A: Hanya 1 paket → Full cycle allowed
+        if ($totalPackages === 1) {
+            return [
+                'allowed' => true,
+                'message' => 'Allowed: Single package workflow',
+                'rule' => 'Rule A: Single package - full cycle allowed',
+                'package_info' => [
+                    'total_packages' => $totalPackages,
+                    'current_package_position' => 1,
+                    'is_last_package' => true,
+                ],
+                'explanation' => 'Kurir hanya punya 1 paket, boleh full cycle sampai finished'
+            ];
+        }
+
+        // Rule B: Multi-package workflow
+        if ($requestedStatus === 'completed') {
+            // completed selalu diizinkan untuk semua paket
+            return [
+                'allowed' => true,
+                'message' => 'Allowed: completed status is always allowed',
+                'rule' => 'Rule B: Multi-package - completed allowed for all',
+                'package_info' => [
+                    'total_packages' => $totalPackages,
+                    'current_package_position' => $currentPackageIndex + 1,
+                    'is_last_package' => $isLastPackage,
+                ],
+                'explanation' => 'Status completed diizinkan untuk semua paket'
+            ];
+        }
+
+        if (in_array($requestedStatus, ['returning', 'finished'])) {
+            if ($isLastPackage) {
+                return [
+                    'allowed' => true,
+                    'message' => 'Allowed: This is the last package',
+                    'rule' => 'Rule B: Multi-package - last package can return',
+                    'package_info' => [
+                        'total_packages' => $totalPackages,
+                        'current_package_position' => $currentPackageIndex + 1,
+                        'is_last_package' => true,
+                    ],
+                    'explanation' => 'Ini adalah paket terakhir, boleh returning → finished'
+                ];
+            } else {
+                return [
+                    'allowed' => false,
+                    'message' => 'Not allowed: You still have other packages to deliver',
+                    'rule' => 'Rule B: Multi-package - only last package can return',
+                    'package_info' => [
+                        'total_packages' => $totalPackages,
+                        'current_package_position' => $currentPackageIndex + 1,
+                        'remaining_packages' => $totalPackages - ($currentPackageIndex + 1),
+                        'is_last_package' => false,
+                    ],
+                    'explanation' => 'Paket 1 & 2 mentok di delivered. Hanya paket terakhir yang bisa returning → finished'
+                ];
+            }
+        }
+
+        // Default allow untuk status lainnya
+        return [
+            'allowed' => true,
+            'message' => 'Allowed: Status transition permitted',
+            'rule' => 'Default: Normal status transition',
+            'package_info' => [
+                'total_packages' => $totalPackages,
+                'current_package_position' => $currentPackageIndex !== false ? $currentPackageIndex + 1 : 'Unknown',
+                'is_last_package' => $isLastPackage,
+            ],
+            'explanation' => 'Transisi status normal diizinkan'
+        ];
+    }
 }
 
 // namespace App\Http\Controllers\Api;
