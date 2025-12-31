@@ -75,20 +75,27 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Shipment Routes
         Route::get('/shipments', [ShipmentController::class, 'index']);
         Route::post('/shipments', [ShipmentController::class, 'store']);
+        
+        // Bulk assignment routes (harus sebelum {shipment} routes)
+        Route::post('/shipments/bulk-assign-driver', [ShipmentController::class, 'bulkAssignDriver']);
+        Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
+        Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
+        
         Route::get('/shipments/{shipment}', [ShipmentController::class, 'show']);
         Route::put('/shipments/{shipment}', [ShipmentController::class, 'update']);
 
         // Admin/Manager actions
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
-        Route::post('/shipments/bulk-assign-driver', [ShipmentController::class, 'bulkAssignDriver']);
-        Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
-        Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
         Route::post('/shipments/{shipment}/pending', [ShipmentController::class, 'pending']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
 
         // Driver actions
         Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);
+        
+        // Driver bulk assignments (Kurir only)
+        Route::get('/driver/bulk-assignments', [ShipmentController::class, 'getMyBulkAssignments']);
+        Route::get('/driver/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getMyBulkAssignmentDetail']);
 
         // Progress tracking
         Route::post('/shipments/{shipment}/destinations/{destination}/progress', [ShipmentProgressController::class, 'updateProgress']);
@@ -103,6 +110,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Dashboard
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/dashboard/chart', [DashboardController::class, 'getChartData']);
+        Route::get('/dashboard/shipment-chart', [DashboardController::class, 'getShipmentChartData']);
+        Route::get('/dashboard/shipments-table', [DashboardController::class, 'getShipmentsTable']);
+        Route::get('/dashboard/test', function() {
+            return response()->json(['message' => 'Test endpoint works', 'time' => now()]);
+        });
 
         // Notifications
         Route::get('/notifications', [NotificationController::class, 'index']);

@@ -195,30 +195,83 @@ class ShipmentPhotoController extends Controller
     }
 
     /**
-     * Store photo with thumbnail generation
+     * Store photo with compression and thumbnail generation
      */
     private function storePhoto($file, string $directory): array
     {
-        $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+        $filename = time().'_'.uniqid().'.jpg'; // Force JPG for better compression
 
-        // Store original
-        $originalPath = $file->storeAs($directory.'/originals', $filename, 'public');
-
-        // Ensure thumbnail directory exists
+        // Ensure directories exist
+        $originalDir = storage_path('app/public/'.$directory.'/originals');
         $thumbnailDir = storage_path('app/public/'.$directory.'/thumbnails');
-        if (! file_exists($thumbnailDir)) {
+        
+        if (!file_exists($originalDir)) {
+            mkdir($originalDir, 0755, true);
+        }
+        if (!file_exists($thumbnailDir)) {
             mkdir($thumbnailDir, 0755, true);
         }
 
-        // Create and store thumbnail
         $manager = ImageManager::gd();
         $image = $manager->read($file);
+
+        // Get original dimensions for smart compression
+        $originalWidth = $image->width();
+        $originalHeight = $image->height();
+
+        // Compress original image with smart quality based on size
+        $originalPath = $directory.'/originals/'.$filename;
+        $compressedImage = $this->compressImage($image, $originalWidth, $originalHeight);
+        $compressedImage->toJpeg($this->getCompressionQuality($originalWidth, $originalHeight))
+                       ->save(storage_path('app/public/'.$originalPath));
+
+        // Create and store thumbnail with quality 70%
         $thumbnailPath = $directory.'/thumbnails/'.$filename;
-        $image->cover(300, 300)->save(storage_path('app/public/'.$thumbnailPath));
+        $image->cover(300, 300)->toJpeg(70)->save(storage_path('app/public/'.$thumbnailPath));
 
         return [
             'original' => $originalPath,
             'thumbnail' => $thumbnailPath,
         ];
+    }
+
+    /**
+     * Compress image based on dimensions
+     */
+    private function compressImage($image, int $width, int $height)
+    {
+        // If image is too large, resize it first
+        $maxWidth = 1920;
+        $maxHeight = 1920;
+
+        if ($width > $maxWidth || $height > $maxHeight) {
+            // Calculate new dimensions maintaining aspect ratio
+            $ratio = min($maxWidth / $width, $maxHeight / $height);
+            $newWidth = (int)($width * $ratio);
+            $newHeight = (int)($height * $ratio);
+            
+            return $image->resize($newWidth, $newHeight);
+        }
+
+        return $image;
+    }
+
+    /**
+     * Get compression quality based on image dimensions
+     */
+    private function getCompressionQuality(int $width, int $height): int
+    {
+        $pixels = $width * $height;
+
+        // Higher resolution = lower quality for better compression
+        if ($pixels > 2000000) { // > 2MP
+            return 70;
+        } elseif ($pixels > 1000000) { // > 1MP
+            return 75;
+        } elseif ($pixels > 500000) { // > 0.5MP
+            return 80;
+        } else {
+            return 85; // Small images get higher quality
+        }
     }
 }

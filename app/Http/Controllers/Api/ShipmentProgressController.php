@@ -35,10 +35,10 @@ class ShipmentProgressController extends Controller
 
         $request->validate([
             'status' => 'required|in:picked,in_progress,arrived,delivered,completed,returning,finished,takeover,failed',
-            'photo' => 'nullable|image|max:4096', // 4MB max
+            'photo' => 'nullable|image|max:5120', // 5MB max
             'note' => 'nullable|string',
             'receiver_name' => 'required_if:status,delivered|string',
-            'received_photo' => 'nullable|image|max:4096',
+            'received_photo' => 'nullable|image|max:5120',
             'takeover_reason' => 'required_if:status,takeover|string',
         ]);
 
@@ -97,18 +97,12 @@ class ShipmentProgressController extends Controller
             if ($request->hasFile('photo')) {
                 try {
                     $photo = $request->file('photo');
-                    $filename = time().'_'.uniqid().'.'.$photo->getClientOriginalExtension();
+                    $filename = time().'_'.uniqid().'.jpg'; // Force JPG for better compression
 
-                    // Simpan original photo
-                    $photoPath = $photo->storeAs('shipment-photos', $filename, 'public');
-
-                    // Buat thumbnail
-                    $thumbnailFilename = 'thumb_'.$filename;
-                    $manager = new ImageManager(new Driver);
-                    $image = $manager->read($photo)->resize(300, 300);
-
-                    $thumbnailPath = 'shipment-photos/'.$thumbnailFilename;
-                    Storage::disk('public')->put($thumbnailPath, $image->encode());
+                    // Use compression method
+                    $compressedPaths = $this->storeCompressedPhoto($photo, 'shipment-photos', $filename);
+                    $photoPath = $compressedPaths['original'];
+                    $thumbnailPath = $compressedPaths['thumbnail'];
                 } catch (\Exception $e) {
                     \Log::error('Photo upload failed', [
                         'error' => $e->getMessage(),
@@ -121,9 +115,18 @@ class ShipmentProgressController extends Controller
             // === Handle received photo (optional) ===
             $receivedPhotoPath = null;
             if ($request->hasFile('received_photo')) {
-                $receivedPhoto = $request->file('received_photo');
-                $receivedFilename = 'received_'.time().'_'.uniqid().'.'.$receivedPhoto->getClientOriginalExtension();
-                $receivedPhotoPath = $receivedPhoto->storeAs('shipment-photos', $receivedFilename, 'public');
+                try {
+                    $receivedPhoto = $request->file('received_photo');
+                    $receivedFilename = 'received_'.time().'_'.uniqid().'.jpg';
+                    
+                    $compressedReceivedPaths = $this->storeCompressedPhoto($receivedPhoto, 'shipment-photos', $receivedFilename);
+                    $receivedPhotoPath = $compressedReceivedPaths['original'];
+                } catch (\Exception $e) {
+                    \Log::error('Received photo upload failed', [
+                        'error' => $e->getMessage(),
+                    ]);
+                    throw new \Exception('Failed to upload received photo: '.$e->getMessage());
+                }
             }
 
             // === Simpan progress ===
@@ -1018,6 +1021,77 @@ class ShipmentProgressController extends Controller
         }
         
         return 'Jarak Tidak Diketahui';
+    }
+
+    /**
+     * Store compressed photo with thumbnail generation
+     */
+    private function storeCompressedPhoto($file, string $directory, string $filename): array
+    {
+        $manager = ImageManager::gd();
+        $image = $manager->read($file);
+
+        // Get original dimensions for smart compression
+        $originalWidth = $image->width();
+        $originalHeight = $image->height();
+
+        // Compress and store original
+        $originalPath = $directory.'/'.$filename;
+        $compressedImage = $this->compressProgressImage($image, $originalWidth, $originalHeight);
+        $encodedImage = $compressedImage->toJpeg($this->getProgressCompressionQuality($originalWidth, $originalHeight));
+        
+        Storage::disk('public')->put($originalPath, $encodedImage);
+
+        // Create and store thumbnail
+        $thumbnailFilename = 'thumb_'.$filename;
+        $thumbnailPath = $directory.'/'.$thumbnailFilename;
+        $thumbnailImage = $image->cover(300, 300)->toJpeg(70);
+        Storage::disk('public')->put($thumbnailPath, $thumbnailImage);
+
+        return [
+            'original' => $originalPath,
+            'thumbnail' => $thumbnailPath,
+        ];
+    }
+
+    /**
+     * Compress image based on dimensions for progress photos
+     */
+    private function compressProgressImage($image, int $width, int $height)
+    {
+        // If image is too large, resize it first
+        $maxWidth = 1920;
+        $maxHeight = 1920;
+
+        if ($width > $maxWidth || $height > $maxHeight) {
+            // Calculate new dimensions maintaining aspect ratio
+            $ratio = min($maxWidth / $width, $maxHeight / $height);
+            $newWidth = (int)($width * $ratio);
+            $newHeight = (int)($height * $ratio);
+            
+            return $image->resize($newWidth, $newHeight);
+        }
+
+        return $image;
+    }
+
+    /**
+     * Get compression quality based on image dimensions for progress photos
+     */
+    private function getProgressCompressionQuality(int $width, int $height): int
+    {
+        $pixels = $width * $height;
+
+        // Higher resolution = lower quality for better compression
+        if ($pixels > 2000000) { // > 2MP
+            return 70;
+        } elseif ($pixels > 1000000) { // > 1MP
+            return 75;
+        } elseif ($pixels > 500000) { // > 0.5MP
+            return 80;
+        } else {
+            return 85; // Small images get higher quality
+        }
     }
 
 

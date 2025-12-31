@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateShipmentRequest;
 use App\Http\Resources\ShipmentResource;
 use App\Models\Shipment;
 use App\Services\NotificationService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -412,7 +413,7 @@ class ShipmentController extends Controller
         $shipmentIds = json_decode($bulkAssignment->shipment_ids);
         
         // Get shipments with their current status and timing
-        $shipments = Shipment::with(['destinations.statusHistories', 'creator'])
+        $shipments = Shipment::with(['destinations.statusHistories', 'creator', 'category'])
             ->whereIn('id', $shipmentIds)
             ->get();
 
@@ -425,6 +426,9 @@ class ShipmentController extends Controller
                     'id' => $destination->id,
                     'delivery_address' => $destination->delivery_address,
                     'receiver_name' => $destination->receiver_name,
+                    'receiver_company' => $destination->receiver_company,
+                    'receiver_contact' => $destination->receiver_contact,
+                    'shipment_note' => $destination->shipment_note,
                     'current_status' => $destination->status,
                     'timing' => $timing,
                 ];
@@ -435,6 +439,11 @@ class ShipmentController extends Controller
                 'shipment_id' => $shipment->shipment_id,
                 'current_status' => $shipment->status,
                 'creator' => $shipment->creator->name,
+                'category' => $shipment->category ? [
+                    'id' => $shipment->category->id,
+                    'name' => $shipment->category->name,
+                    'description' => $shipment->category->description,
+                ] : null,
                 'destinations' => $destinationData,
             ];
         }
@@ -448,6 +457,386 @@ class ShipmentController extends Controller
         ]);
     }
 
+    public function pending(Request $request, Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        if (! in_array($shipment->status, ['created', 'pending'])) {
+            return response()->json([
+                'message' => 'Only created or pending shipments can be set to pending',
+            ], 400);
+        }
+
+        $request->validate([
+            'scheduled_delivery_datetime' => 'nullable|date_format:Y-m-d H:i:s',
+        ]);
+
+        $shipment->update([
+            'status' => 'pending',
+            'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
+        ]);
+
+        // Send notification
+        app(NotificationService::class)->shipmentPending($shipment->fresh(['creator']));
+
+        return response()->json([
+            'message' => 'Shipment set to pending successfully',
+            'data' => $shipment->fresh(['creator']),
+        ]);
+    }
+
+    public function startDelivery(Shipment $shipment): JsonResponse
+    {
+        if ($shipment->assigned_driver_id !== auth()->id()) {
+            return response()->json([
+                'message' => 'You are not assigned to this shipment',
+            ], 403);
+        }
+
+        if (! in_array($shipment->status, ['assigned', 'pending'])) {
+            return response()->json([
+                'message' => 'Shipment must be assigned or pending before starting delivery',
+            ], 400);
+        }
+
+        // Validasi: Harus ada minimal 1 destination yang sudah di-pickup
+        $pickedCount = $shipment->destinations()->where('status', 'picked')->count();
+        if ($pickedCount === 0) {
+            return response()->json([
+                'message' => 'Please pickup at least one item before starting delivery',
+                'hint' => 'Use POST /shipments/{id}/destinations/{destination_id}/progress with status=picked',
+            ], 400);
+        }
+
+        // update shipment
+        $shipment->update(['status' => 'in_progress']);
+
+        // update semua destinasi yg sudah picked jadi in_progress
+        $shipment->destinations()
+            ->where('status', 'picked')
+            ->update(['status' => 'in_progress']);
+
+        // kirim notifikasi
+        app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
+
+        return response()->json([
+            'message' => 'Delivery started successfully',
+            'data' => $shipment->load('destinations'),
+        ]);
+    }
+
+    public function cancel(Request $request, Shipment $shipment): JsonResponse
+    {
+        if (! $request->user() || ! $request->user()->can('approve-shipments')) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if (! in_array($shipment->status, ['created', 'pending'])) {
+            return response()->json([
+                'message' => 'Only created or pending shipments can be cancelled',
+            ], 400);
+        }
+
+        $shipment->update([
+            'status' => 'cancelled',
+            'cancelled_by' => auth()->id(),
+            'cancelled_at' => now(),
+        ]);
+
+        app(\App\Services\NotificationService::class)->shipmentCancelled($shipment->fresh(['creator', 'driver']));
+
+        return response()->json([
+            'message' => 'Shipment cancelled successfully',
+            'data' => $shipment->fresh(['creator', 'driver']),
+        ]);
+    }
+
+    /**
+     * Get bulk assignments for current driver (Kurir only)
+     */
+    public function getMyBulkAssignments(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            
+            // Only drivers can access this endpoint
+            if (!$user->hasRole('Kurir')) {
+                return response()->json([
+                    'message' => 'This endpoint is only for drivers'
+                ], 403);
+            }
+
+            $request->validate([
+                'page' => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:50',
+                'status' => 'nullable|in:assigned,in_progress,completed,all',
+            ]);
+
+            $perPage = $request->get('per_page', 10);
+
+            // Get bulk assignments for this driver
+            $query = DB::table('bulk_assignments as ba')
+                ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+                ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+                ->where('ba.driver_id', $user->id)
+                ->select([
+                    'ba.id',
+                    'ba.shipment_count',
+                    'ba.shipment_ids',
+                    'ba.assigned_at',
+                    'admin.name as admin_name',
+                    'vt.name as vehicle_type_name'
+                ])
+                ->orderBy('ba.assigned_at', 'desc');
+
+            $bulkAssignments = $query->paginate($perPage);
+
+            // Transform data for driver view
+            $driverData = $bulkAssignments->getCollection()->map(function ($bulkAssignment) use ($request) {
+                $shipmentIds = json_decode($bulkAssignment->shipment_ids);
+                
+                // Get shipments with current status
+                $shipmentsQuery = Shipment::with([
+                    'destinations:id,shipment_id,delivery_address,receiver_name,receiver_contact,status',
+                    'items:id,shipment_id,item_name,quantity',
+                    'creator:id,name',
+                    'category:id,name,description'
+                ])->whereIn('id', $shipmentIds);
+
+                // Filter by status if requested
+                if ($request->filled('status') && $request->status !== 'all') {
+                    $shipmentsQuery->where('status', $request->status);
+                }
+
+                $shipments = $shipmentsQuery->get();
+
+                // Sort shipments according to the original order selected by admin
+                $orderedShipments = collect();
+                foreach ($shipmentIds as $id) {
+                    $shipment = $shipments->firstWhere('id', $id);
+                    if ($shipment) {
+                        $orderedShipments->push($shipment);
+                    }
+                }
+
+                // Calculate summary for this bulk assignment
+                $summary = $this->calculateDriverBulkSummary($orderedShipments);
+
+                // Transform shipments data for driver
+                $shipmentsData = $orderedShipments->map(function ($shipment) {
+                    return [
+                        'id' => $shipment->id,
+                        'shipment_id' => $shipment->shipment_id,
+                        'current_status' => $shipment->status,
+                        'status_label' => $this->getShipmentStatusLabel($shipment->status),
+                        'priority' => $shipment->priority,
+                        'priority_label' => ucfirst($shipment->priority),
+                        'creator' => $shipment->creator ? $shipment->creator->name : 'Unknown',
+                        'category' => $shipment->category ? [
+                            'id' => $shipment->category->id,
+                            'name' => $shipment->category->name,
+                            'description' => $shipment->category->description,
+                        ] : null,
+                        'deadline' => $shipment->deadline ? $shipment->deadline->format('Y-m-d H:i') : null,
+                        'is_overdue' => $shipment->deadline && $shipment->deadline < now() && $shipment->status !== 'completed',
+                        'destinations' => $shipment->destinations->map(function ($dest) {
+                            return [
+                                'id' => $dest->id,
+                                'delivery_address' => $dest->delivery_address,
+                                'receiver_name' => $dest->receiver_name,
+                                'receiver_contact' => $dest->receiver_contact ?? '',
+                                'current_status' => $dest->status,
+                                'status_label' => $this->getDestinationStatusLabel($dest->status),
+                            ];
+                        }),
+                        'items' => $shipment->items->map(function ($item) {
+                            return [
+                                'item_name' => $item->item_name,
+                                'quantity' => $item->quantity,
+                            ];
+                        }),
+                        'total_items' => $shipment->items->count(),
+                        'total_destinations' => $shipment->destinations->count(),
+                    ];
+                });
+
+                return [
+                    'bulk_assignment_id' => $bulkAssignment->id,
+                    'assigned_by' => $bulkAssignment->admin_name,
+                    'vehicle_type' => $bulkAssignment->vehicle_type_name,
+                    'assigned_at' => $bulkAssignment->assigned_at,
+                    'assigned_at_formatted' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->format('d M Y, H:i'),
+                    'days_since_assigned' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->diffInDays(now()),
+                    'total_shipments' => $bulkAssignment->shipment_count,
+                    'summary' => $summary,
+                    'shipments' => $shipmentsData,
+                ];
+            });
+
+            return response()->json([
+                'message' => 'Driver bulk assignments retrieved successfully',
+                'data' => $driverData,
+                'pagination' => [
+                    'current_page' => $bulkAssignments->currentPage(),
+                    'per_page' => $bulkAssignments->perPage(),
+                    'total' => $bulkAssignments->total(),
+                    'last_page' => $bulkAssignments->lastPage(),
+                    'from' => $bulkAssignments->firstItem(),
+                    'to' => $bulkAssignments->lastItem(),
+                    'has_more_pages' => $bulkAssignments->hasMorePages(),
+                ],
+                'filters' => [
+                    'status' => $request->status ?? 'all',
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to retrieve bulk assignments',
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Get specific bulk assignment detail for current driver
+     */
+    public function getMyBulkAssignmentDetail(Request $request, $bulkAssignmentId): JsonResponse
+    {
+        $user = $request->user();
+        
+        // Only drivers can access this endpoint
+        if (!$user->hasRole('Kurir')) {
+            return response()->json([
+                'message' => 'This endpoint is only for drivers'
+            ], 403);
+        }
+
+        // Get bulk assignment and verify it belongs to this driver
+        $bulkAssignment = DB::table('bulk_assignments as ba')
+            ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+            ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+            ->where('ba.id', $bulkAssignmentId)
+            ->where('ba.driver_id', $user->id)
+            ->select([
+                'ba.*',
+                'admin.name as admin_name',
+                'vt.name as vehicle_type_name'
+            ])
+            ->first();
+
+        if (!$bulkAssignment) {
+            return response()->json([
+                'message' => 'Bulk assignment not found or not assigned to you'
+            ], 404);
+        }
+
+        $shipmentIds = json_decode($bulkAssignment->shipment_ids);
+        
+        // Get detailed shipments data
+        $shipments = Shipment::with([
+            'destinations.statusHistories',
+            'items',
+            'creator:id,name,email',
+            'photos',
+            'category:id,name,description'
+        ])->whereIn('id', $shipmentIds)->get();
+
+        // Sort shipments according to the original order selected by admin
+        $orderedShipments = collect();
+        foreach ($shipmentIds as $id) {
+            $shipment = $shipments->firstWhere('id', $id);
+            if ($shipment) {
+                $orderedShipments->push($shipment);
+            }
+        }
+
+        // Transform detailed data for driver
+        $detailedShipments = $orderedShipments->map(function ($shipment) {
+            $destinationsData = $shipment->destinations->map(function ($destination) {
+                $timing = $this->calculateDestinationTiming($destination);
+                
+                return [
+                    'id' => $destination->id,
+                    'delivery_address' => $destination->delivery_address,
+                    'receiver_name' => $destination->receiver_name,
+                    'receiver_contact' => $destination->receiver_contact,
+                    'receiver_company' => $destination->receiver_company,
+                    'current_status' => $destination->status,
+                    'status_label' => $this->getDestinationStatusLabel($destination->status),
+                    'shipment_note' => $destination->shipment_note,
+                    'timing' => $timing,
+                ];
+            });
+
+            return [
+                'id' => $shipment->id,
+                'shipment_id' => $shipment->shipment_id,
+                'current_status' => $shipment->status,
+                'status_label' => $this->getShipmentStatusLabel($shipment->status),
+                'priority' => $shipment->priority,
+                'priority_label' => ucfirst($shipment->priority),
+                'notes' => $shipment->notes,
+                'deadline' => $shipment->deadline ? $shipment->deadline->format('Y-m-d H:i') : null,
+                'deadline_formatted' => $shipment->deadline ? $shipment->deadline->format('d M Y, H:i') : null,
+                'is_overdue' => $shipment->deadline && $shipment->deadline < now() && $shipment->status !== 'completed',
+                'creator' => [
+                    'name' => $shipment->creator->name,
+                    'email' => $shipment->creator->email,
+                ],
+                'category' => $shipment->category ? [
+                    'id' => $shipment->category->id,
+                    'name' => $shipment->category->name,
+                    'description' => $shipment->category->description,
+                ] : null,
+                'destinations' => $destinationsData,
+                'items' => $shipment->items->map(function ($item) {
+                    return [
+                        'item_name' => $item->item_name,
+                        'quantity' => $item->quantity,
+                        'description' => $item->description,
+                    ];
+                }),
+                'photos' => $shipment->photos->map(function ($photo) {
+                    return [
+                        'id' => $photo->id,
+                        'type' => $photo->type,
+                        'photo_url' => $photo->photo_url,
+                        'photo_thumbnail' => $photo->photo_thumbnail,
+                        'notes' => $photo->notes,
+                        'uploaded_at' => $photo->uploaded_at->format('Y-m-d H:i:s'),
+                    ];
+                }),
+                'totals' => [
+                    'items' => $shipment->items->count(),
+                    'destinations' => $shipment->destinations->count(),
+                ],
+            ];
+        });
+
+        // Calculate comprehensive summary
+        $comprehensiveSummary = $this->calculateDriverBulkSummary($orderedShipments);
+
+        return response()->json([
+            'message' => 'Bulk assignment detail retrieved successfully',
+            'data' => [
+                'bulk_assignment' => [
+                    'id' => $bulkAssignment->id,
+                    'assigned_by' => $bulkAssignment->admin_name,
+                    'vehicle_type' => $bulkAssignment->vehicle_type_name,
+                    'assigned_at' => $bulkAssignment->assigned_at,
+                    'assigned_at_formatted' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->format('d M Y, H:i'),
+                    'days_since_assigned' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->diffInDays(now()),
+                    'total_shipments' => $bulkAssignment->shipment_count,
+                ],
+                'shipments' => $detailedShipments,
+                'summary' => $comprehensiveSummary,
+            ],
+        ]);
+    }
+
+    // Helper methods
     private function calculateDestinationTiming($destination): array
     {
         $histories = $destination->statusHistories()
@@ -573,122 +962,116 @@ class ShipmentController extends Controller
         return $summary;
     }
 
-    public function pending(Request $request, Shipment $shipment): JsonResponse
+    /**
+     * Calculate summary for driver bulk assignment
+     */
+    private function calculateDriverBulkSummary($shipments): array
     {
-        $this->authorize('assign-drivers');
+        $totalShipments = $shipments->count();
+        $statusCounts = [
+            'assigned' => 0,
+            'in_progress' => 0,
+            'completed' => 0,
+        ];
 
-        if (! in_array($shipment->status, ['created', 'pending'])) {
-            return response()->json([
-                'message' => 'Only created or pending shipments can be set to pending',
-            ], 400);
+        $totalDestinations = 0;
+        $completedDestinations = 0;
+        $overdueShipments = 0;
+        $totalItems = 0;
+
+        foreach ($shipments as $shipment) {
+            // Count by status
+            if (isset($statusCounts[$shipment->status])) {
+                $statusCounts[$shipment->status]++;
+            }
+
+            // Check overdue
+            if ($shipment->deadline && $shipment->deadline < now() && $shipment->status !== 'completed') {
+                $overdueShipments++;
+            }
+
+            // Count destinations and items
+            $totalDestinations += $shipment->destinations->count();
+            $totalItems += $shipment->items->count();
+
+            // Count completed destinations
+            $completedDestinations += $shipment->destinations->where('status', 'finished')->count();
         }
 
-        $request->validate([
-            'scheduled_delivery_datetime' => 'nullable|date_format:Y-m-d H:i:s',
-        ]);
+        $completionRate = $totalShipments > 0 ? round(($statusCounts['completed'] / $totalShipments) * 100, 2) : 0;
+        $destinationCompletionRate = $totalDestinations > 0 ? round(($completedDestinations / $totalDestinations) * 100, 2) : 0;
 
-        $shipment->update([
-            'status' => 'pending',
-            'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime,
-        ]);
-
-        // Send notification
-        app(NotificationService::class)->shipmentPending($shipment->fresh(['creator']));
-
-        return response()->json([
-            'message' => 'Shipment set to pending successfully',
-            'data' => $shipment->fresh(['creator']),
-        ]);
+        return [
+            'total_shipments' => $totalShipments,
+            'status_breakdown' => [
+                'assigned' => $statusCounts['assigned'],
+                'in_progress' => $statusCounts['in_progress'],
+                'completed' => $statusCounts['completed'],
+            ],
+            'completion_rate' => $completionRate,
+            'destination_completion_rate' => $destinationCompletionRate,
+            'overdue_shipments' => $overdueShipments,
+            'totals' => [
+                'destinations' => $totalDestinations,
+                'completed_destinations' => $completedDestinations,
+                'items' => $totalItems,
+            ],
+        ];
     }
 
-    // public function startDelivery(Shipment $shipment): JsonResponse
-    // {
-    //     if ($shipment->assigned_driver_id !== auth()->id()) {
-    //         return response()->json([
-    //             'message' => 'You are not assigned to this shipment'
-    //         ], 403);
-    //     }
-
-    //     if (!in_array($shipment->status, ['assigned', 'pending'])) {
-    //         return response()->json([
-    //             'message' => 'Shipment must be assigned or pending before starting delivery'
-    //         ], 400);
-    //     }
-
-    //     $shipment->update(['status' => 'in_progress']);
-
-    //     // Send notification
-    //     app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
-
-    //     return response()->json([
-    //         'message' => 'Delivery started successfully',
-    //         'data' => $shipment
-    //     ]);
-    // }
-
-    public function startDelivery(Shipment $shipment): JsonResponse
+    /**
+     * Get destination status label
+     */
+    private function getDestinationStatusLabel(string $status): string
     {
-        if ($shipment->assigned_driver_id !== auth()->id()) {
-            return response()->json([
-                'message' => 'You are not assigned to this shipment',
-            ], 403);
+        switch ($status) {
+            case 'pending':
+                return 'Menunggu Pickup';
+            case 'picked':
+                return 'Sudah Dipickup';
+            case 'in_progress':
+                return 'Dalam Perjalanan';
+            case 'arrived':
+                return 'Sampai di Lokasi';
+            case 'delivered':
+                return 'Sudah Diterima';
+            case 'completed':
+                return 'Selesai';
+            case 'returning':
+                return 'Perjalanan Pulang';
+            case 'finished':
+                return 'Sampai di Kantor';
+            case 'takeover':
+                return 'Takeover';
+            case 'failed':
+                return 'Gagal';
+            default:
+                return ucfirst($status);
         }
-
-        if (! in_array($shipment->status, ['assigned', 'pending'])) {
-            return response()->json([
-                'message' => 'Shipment must be assigned or pending before starting delivery',
-            ], 400);
-        }
-
-        // 🔹 Validasi: Harus ada minimal 1 destination yang sudah di-pickup
-        $pickedCount = $shipment->destinations()->where('status', 'picked')->count();
-        if ($pickedCount === 0) {
-            return response()->json([
-                'message' => 'Please pickup at least one item before starting delivery',
-                'hint' => 'Use POST /shipments/{id}/destinations/{destination_id}/progress with status=picked',
-            ], 400);
-        }
-
-        // 🔹 update shipment
-        $shipment->update(['status' => 'in_progress']);
-
-        // 🔹 update semua destinasi yg sudah picked jadi in_progress
-        $shipment->destinations()
-            ->where('status', 'picked')
-            ->update(['status' => 'in_progress']);
-
-        // 🔹 kirim notifikasi
-        app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
-
-        return response()->json([
-            'message' => 'Delivery started successfully',
-            'data' => $shipment->load('destinations'),
-        ]);
     }
 
-    public function cancel(Request $request, Shipment $shipment): JsonResponse
+    /**
+     * Get shipment status label
+     */
+    private function getShipmentStatusLabel(string $status): string
     {
-        if (! $request->user() || ! $request->user()->can('approve-shipments')) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        switch ($status) {
+            case 'created':
+                return 'Dibuat';
+            case 'pending':
+                return 'Menunggu Persetujuan';
+            case 'approved':
+                return 'Disetujui';
+            case 'assigned':
+                return 'Ditugaskan';
+            case 'in_progress':
+                return 'Dalam Perjalanan';
+            case 'completed':
+                return 'Selesai';
+            case 'cancelled':
+                return 'Dibatalkan';
+            default:
+                return ucfirst($status);
         }
-
-        if (! in_array($shipment->status, ['created', 'pending'])) {
-            return response()->json([
-                'message' => 'Only created or pending shipments can be cancelled',
-            ], 400);
-        }
-
-        $shipment->update([
-            'status' => 'cancelled',
-            'cancelled_by' => auth()->id(),
-            'cancelled_at' => now(),
-        ]);
-
-        app(\App\Services\NotificationService::class)->shipmentCancelled($shipment->fresh(['creator', 'driver']));
-
-        return response()->json([
-            'message' => 'Shipment cancelled successfully',
-            'data' => $shipment->fresh(['creator', 'driver']),
-        ]);
     }
 }
