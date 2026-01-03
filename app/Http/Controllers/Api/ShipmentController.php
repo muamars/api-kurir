@@ -591,24 +591,32 @@ class ShipmentController extends Controller
 
             $bulkAssignments = $query->paginate($perPage);
 
-            // Transform data for driver view
-            $driverData = $bulkAssignments->getCollection()->map(function ($bulkAssignment) use ($request) {
+            // Transform data for driver view - ONLY show bulk assignments with active shipments
+            $driverData = $bulkAssignments->getCollection()->map(function ($bulkAssignment) use ($request, $user) {
                 $shipmentIds = json_decode($bulkAssignment->shipment_ids);
                 
-                // Get shipments with current status
+                // Get shipments with current status - ONLY active shipments still assigned to this driver
                 $shipmentsQuery = Shipment::with([
                     'destinations:id,shipment_id,delivery_address,receiver_name,receiver_contact,status',
                     'items:id,shipment_id,item_name,quantity',
                     'creator:id,name',
                     'category:id,name,description'
-                ])->whereIn('id', $shipmentIds);
+                ])
+                ->whereIn('id', $shipmentIds)
+                ->where('assigned_driver_id', $user->id) // ✅ FILTER: Only shipments still assigned to this driver
+                ->whereNotIn('status', ['cancelled']); // ✅ FILTER: Exclude cancelled shipments only
 
-                // Filter by status if requested
+                // Additional status filter if requested
                 if ($request->filled('status') && $request->status !== 'all') {
                     $shipmentsQuery->where('status', $request->status);
                 }
 
                 $shipments = $shipmentsQuery->get();
+
+                // ✅ SKIP bulk assignment if no shipments found
+                if ($shipments->isEmpty()) {
+                    return null;
+                }
 
                 // Sort shipments according to the original order selected by admin
                 $orderedShipments = collect();
@@ -671,7 +679,7 @@ class ShipmentController extends Controller
                     'summary' => $summary,
                     'shipments' => $shipmentsData,
                 ];
-            });
+            })->filter(); // ✅ Remove null entries (bulk assignments with no active shipments)
 
             return response()->json([
                 'message' => 'Driver bulk assignments retrieved successfully',
@@ -734,14 +742,25 @@ class ShipmentController extends Controller
 
         $shipmentIds = json_decode($bulkAssignment->shipment_ids);
         
-        // Get detailed shipments data
+        // Get detailed shipments data - Show all shipments in bulk assignment that are still assigned to this driver
         $shipments = Shipment::with([
             'destinations.statusHistories',
             'items',
             'creator:id,name,email',
             'photos',
             'category:id,name,description'
-        ])->whereIn('id', $shipmentIds)->get();
+        ])
+        ->whereIn('id', $shipmentIds)
+        ->where('assigned_driver_id', $user->id) // ✅ FILTER: Only shipments still assigned to this driver
+        ->whereNotIn('status', ['cancelled']) // ✅ FILTER: Exclude cancelled shipments only
+        ->get();
+
+        // ✅ If no shipments found, return not found
+        if ($shipments->isEmpty()) {
+            return response()->json([
+                'message' => 'No shipments found in this bulk assignment for current driver'
+            ], 404);
+        }
 
         // Sort shipments according to the original order selected by admin
         $orderedShipments = collect();

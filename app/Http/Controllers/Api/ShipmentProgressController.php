@@ -16,17 +16,46 @@ use Intervention\Image\ImageManager;
 
 class ShipmentProgressController extends Controller
 {
-    public function updateProgress(Request $request, Shipment $shipment, ShipmentDestination $destination): JsonResponse
+    public function updateProgress(Request $request, $shipmentId, $destinationId): JsonResponse
     {
+        // Cari shipment dan destination dengan validasi yang lebih baik
+        $shipment = Shipment::find($shipmentId);
+        if (!$shipment) {
+            return response()->json([
+                'message' => 'Shipment tidak ditemukan',
+                'shipment_id' => $shipmentId,
+            ], 404);
+        }
+
+        $destination = ShipmentDestination::find($destinationId);
+        if (!$destination) {
+            return response()->json([
+                'message' => 'Destination tidak ditemukan',
+                'destination_id' => $destinationId,
+            ], 404);
+        }
+
         // Log request untuk debug
         \Log::info('Update Progress Request', [
             'shipment_id' => $shipment->id,
+            'shipment_status_before' => $shipment->status,
             'destination_id' => $destination->id,
-            'status' => $request->status,
+            'destination_status_before' => $destination->status,
+            'requested_status' => $request->status,
             'has_photo' => $request->hasFile('photo'),
             'user_id' => auth()->id(),
         ]);
 
+        // Validasi: Pastikan destination milik shipment ini
+        if ($destination->shipment_id !== $shipment->id) {
+            return response()->json([
+                'message' => 'Destination tidak milik shipment ini',
+                'shipment_id' => $shipment->id,
+                'destination_shipment_id' => $destination->shipment_id,
+            ], 400);
+        }
+
+        // Validasi: Driver assignment
         if ($shipment->assigned_driver_id !== auth()->id()) {
             return response()->json([
                 'message' => 'You are not assigned to this shipment',
@@ -34,7 +63,7 @@ class ShipmentProgressController extends Controller
         }
 
         $request->validate([
-            'status' => 'required|in:picked,in_progress,arrived,delivered,completed,returning,finished,takeover,failed',
+            'status' => 'required|in:picked,in_progress,arrived,delivered,returning,finished,takeover,failed',
             'photo' => 'nullable|image|max:5120', // 5MB max
             'note' => 'nullable|string',
             'receiver_name' => 'required_if:status,delivered|string',
@@ -42,18 +71,17 @@ class ShipmentProgressController extends Controller
             'takeover_reason' => 'required_if:status,takeover|string',
         ]);
 
-        // Validasi: Status flow yang benar - tidak boleh lompat
+        // Validasi: Status flow yang benar - UPDATED untuk takeover rules
         $validStatusTransitions = [
-            'pending' => ['picked'],
+            'pending' => ['picked', 'in_progress', 'takeover'], // ✅ NEW: Takeover dari pending
             'picked' => ['in_progress', 'takeover'],
-            'in_progress' => ['arrived', 'takeover', 'failed'],
-            'arrived' => ['delivered', 'failed'],
-            'delivered' => ['completed'],
-            'completed' => ['returning'],
+            'in_progress' => ['arrived', 'delivered', 'takeover', 'failed'], // ✅ Takeover dari in_progress
+            'arrived' => ['delivered', 'failed'], // ❌ REMOVED: Tidak bisa takeover dari arrived
+            'delivered' => ['returning'], // ❌ REMOVED: Tidak bisa takeover dari delivered
             'returning' => ['finished'],
             'finished' => [], // Status final
             'takeover' => [], // Status final - akan di-reset ke pending otomatis
-            'failed' => ['picked'], // Setelah failed, bisa retry pickup
+            'failed' => ['picked', 'in_progress'], // ✅ NEW: Setelah failed, bisa langsung in_progress
         ];
 
         $currentStatus = $destination->status;
@@ -74,8 +102,26 @@ class ShipmentProgressController extends Controller
         }
 
         // 🔑 NEW RULES ENGINE - Multi-Package Workflow Logic
-        if (in_array($newStatus, ['completed', 'returning', 'finished'])) {
+        \Log::info('Checking Multi-Package Validation', [
+            'new_status' => $newStatus,
+            'should_validate' => in_array($newStatus, ['returning', 'finished']),
+        ]);
+        
+        if (in_array($newStatus, ['returning', 'finished'])) {
+            \Log::info('Calling validateMultiPackageWorkflow', [
+                'shipment_id' => $shipment->id,
+                'destination_id' => $destination->id,
+                'new_status' => $newStatus,
+            ]);
+            
             $multiPackageValidation = $this->validateMultiPackageWorkflow($shipment, $destination, $newStatus);
+            
+            \Log::info('Multi-Package Validation Result', [
+                'allowed' => $multiPackageValidation['allowed'],
+                'message' => $multiPackageValidation['message'],
+                'rule' => $multiPackageValidation['rule'],
+            ]);
+            
             if (!$multiPackageValidation['allowed']) {
                 return response()->json([
                     'message' => $multiPackageValidation['message'],
@@ -86,10 +132,12 @@ class ShipmentProgressController extends Controller
             }
         }
 
-        // Validasi: Pickup bisa dilakukan saat shipment status = assigned atau in_progress
-        if ($request->status === 'picked' && ! in_array($shipment->status, ['assigned', 'in_progress'])) {
+        // Validasi: Pickup atau langsung kirim bisa dilakukan saat shipment status = assigned atau in_progress
+        if (in_array($request->status, ['picked', 'in_progress']) && ! in_array($shipment->status, ['assigned', 'in_progress'])) {
             return response()->json([
-                'message' => 'Pickup can only be done when shipment is assigned or in progress',
+                'message' => 'Pickup or direct delivery can only be done when shipment is assigned or in progress',
+                'current_shipment_status' => $shipment->status,
+                'allowed_shipment_statuses' => ['assigned', 'in_progress'],
             ], 400);
         }
 
@@ -174,44 +222,18 @@ class ShipmentProgressController extends Controller
                 }
             }
 
-            // === Handle status COMPLETED: cek apakah semua destination completed ===
-            if ($request->status === 'completed') {
-                // Refresh shipment untuk get latest destination status
-                $shipment->refresh();
-
-                // Cek apakah semua destination sudah completed
-                $totalDestinations = $shipment->destinations()->count();
-                $completedDestinations = $shipment->destinations()
-                    ->where('status', 'completed')
-                    ->count();
-
-                \Log::info('Checking all destinations completed', [
-                    'total' => $totalDestinations,
-                    'completed' => $completedDestinations,
-                ]);
-
-                if ($completedDestinations === $totalDestinations) {
-                    // Auto-set semua destination ke returning
-                    $shipment->destinations()
-                        ->where('status', 'completed')
-                        ->update(['status' => 'returning']);
-
-                    \Log::info('All destinations completed, auto-set to returning');
-
-                    try {
-                        app(NotificationService::class)->deliveryCompleted(
-                            $shipment->load(['creator', 'driver'])
-                        );
-                    } catch (\Exception $e) {
-                        \Log::warning('Completion notification failed', [
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                }
-            }
-
             // === Handle status TAKEOVER: kembalikan ke admin ===
             if ($request->status === 'takeover') {
+                \Log::info('Processing takeover', [
+                    'shipment_id' => $shipment->id,
+                    'destination_id' => $destination->id,
+                    'takeover_reason' => $request->takeover_reason ?? $request->note,
+                    'driver_id' => auth()->id(),
+                ]);
+
+                // ✅ NEW: Remove shipment from current bulk assignment
+                $this->removeShipmentFromBulkAssignment($shipment->id, auth()->id());
+
                 // Update shipment: kembali ke pending, unassign driver
                 $shipment->update([
                     'status' => 'pending',
@@ -219,10 +241,15 @@ class ShipmentProgressController extends Controller
                 ]);
 
                 // PENTING: Reset semua destination yang belum selesai kembali ke pending
-                // agar driver baru bisa pickup lagi
-                $shipment->destinations()
-                    ->whereNotIn('status', ['completed', 'finished'])
+                // agar driver baru bisa pickup lagi (updated untuk flow baru)
+                $resetCount = $shipment->destinations()
+                    ->whereNotIn('status', ['returning', 'finished']) // ✅ UPDATED: Tidak reset yang sudah returning/finished
                     ->update(['status' => 'pending']);
+
+                \Log::info('Takeover destinations reset', [
+                    'shipment_id' => $shipment->id,
+                    'reset_count' => $resetCount,
+                ]);
 
                 try {
                     app(NotificationService::class)->shipmentTakeover(
@@ -238,12 +265,33 @@ class ShipmentProgressController extends Controller
 
             // === Handle status FINISHED: complete shipment jika semua finished ===
             if ($request->status === 'finished') {
+                \Log::info('Processing FINISHED status', [
+                    'shipment_id' => $shipment->id,
+                    'destination_id' => $destination->id,
+                    'driver_id' => auth()->id(),
+                ]);
+
                 $allDestinationsFinished = $shipment->destinations()
                     ->where('status', 'finished')
                     ->count() === $shipment->destinations()->count();
 
+                \Log::info('Checking if all destinations finished', [
+                    'shipment_id' => $shipment->id,
+                    'finished_count' => $shipment->destinations()->where('status', 'finished')->count(),
+                    'total_count' => $shipment->destinations()->count(),
+                    'all_finished' => $allDestinationsFinished,
+                ]);
+
                 if ($allDestinationsFinished) {
+                    $oldShipmentStatus = $shipment->status;
                     $shipment->update(['status' => 'completed']);
+                    \Log::info('Shipment marked as completed', [
+                        'shipment_id' => $shipment->id,
+                        'old_status' => $oldShipmentStatus,
+                        'new_status' => 'completed',
+                        'reason' => 'All destinations finished',
+                        'driver_id' => auth()->id(),
+                    ]);
                 }
             }
 
@@ -329,8 +377,8 @@ class ShipmentProgressController extends Controller
             ->orderBy('changed_at', 'asc')
             ->get();
 
-        // Status flow yang benar berurutan
-        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered', 'completed', 'returning', 'finished'];
+        // Status flow yang benar berurutan (simplified flow)
+        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered', 'returning', 'finished'];
         
         $validatedHistory = [];
         $statusHistoryMap = [];
@@ -401,16 +449,19 @@ class ShipmentProgressController extends Controller
     {
         return match ($oldStatus.'_to_'.$newStatus) {
             'pending_to_picked' => 'Barang sudah di pickup',
+            'pending_to_in_progress' => 'Langsung mulai pengiriman (skip pickup)', // ✅ NEW
+            'pending_to_takeover' => 'Driver melakukan takeover sebelum pickup', // ✅ NEW
             'picked_to_in_progress' => 'Proses pengiriman',
             'in_progress_to_arrived' => 'Sampai di lokasi',
+            'in_progress_to_delivered' => 'Langsung diterima (skip arrived)', // ✅ NEW
             'arrived_to_delivered' => 'Sudah diterima',
-            'delivered_to_completed' => 'Barang completed semua',
-            'completed_to_returning' => 'Arah pulang ke kantor',
+            'delivered_to_returning' => 'Arah pulang ke kantor', // ✅ UPDATED: Langsung dari delivered
             'returning_to_finished' => 'Sudah sampai di kantor finish',
             'picked_to_takeover' => 'Driver melakukan takeover setelah pickup',
             'in_progress_to_takeover' => 'Driver melakukan takeover saat dalam perjalanan',
             'in_progress_to_failed' => 'Pengiriman gagal',
             'arrived_to_failed' => 'Gagal menyerahkan barang',
+            'failed_to_in_progress' => 'Retry pengiriman langsung (skip pickup)', // ✅ NEW
             default => "Status berubah dari {$this->getStatusLabel($oldStatus)} ke {$this->getStatusLabel($newStatus)}",
         };
     }
@@ -500,7 +551,7 @@ class ShipmentProgressController extends Controller
         }
 
         $durations = [];
-        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered', 'completed', 'returning', 'finished'];
+        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered', 'returning', 'finished'];
 
         // Buat map waktu untuk setiap status
         $statusTimes = [];
@@ -1111,131 +1162,228 @@ class ShipmentProgressController extends Controller
      * 🔑 Multi-Package Workflow Rules Engine
      * 
      * Rule A: Kurir hanya punya 1 paket → Full cycle sampai finished
-     * Rule B: Kurir punya > 1 paket → Paket 1 & 2 mentok di delivered, 
+     * Rule B: Kurir punya > 1 paket → Sequential processing + Paket 1 & 2 mentok di delivered, 
      *         hanya paket terakhir yang bisa returning → finished
+     * Rule C: Sequential Processing → Paket A harus selesai dulu sebelum Paket B bisa mulai
      */
     private function validateMultiPackageWorkflow($shipment, $destination, $requestedStatus): array
     {
-        // Get all destinations assigned to this driver that are still active
-        $driverDestinations = ShipmentDestination::whereHas('shipment', function ($query) {
-            $query->where('assigned_driver_id', auth()->id())
-                  ->whereIn('status', ['assigned', 'in_progress']);
-        })
-        ->whereIn('status', ['pending', 'picked', 'in_progress', 'arrived', 'delivered'])
-        ->orderBy('id')
-        ->get();
-
-        $totalPackages = $driverDestinations->count();
-        $currentPackageIndex = $driverDestinations->search(function ($dest) use ($destination) {
-            return $dest->id === $destination->id;
-        });
-
-        // Jika tidak ditemukan dalam active destinations, cek apakah ini destination yang sudah delivered
-        if ($currentPackageIndex === false) {
-            $currentDestination = ShipmentDestination::find($destination->id);
-            if ($currentDestination && $currentDestination->status === 'delivered') {
-                // Ini adalah destination yang sudah delivered, cek apakah ini yang terakhir
-                $remainingDestinations = ShipmentDestination::whereHas('shipment', function ($query) {
-                    $query->where('assigned_driver_id', auth()->id())
-                          ->whereIn('status', ['assigned', 'in_progress']);
-                })
-                ->whereIn('status', ['pending', 'picked', 'in_progress', 'arrived'])
-                ->count();
-
-                $isLastPackage = $remainingDestinations === 0;
+        // Get bulk assignment for this driver to maintain order
+        $bulkAssignment = DB::table('bulk_assignments')
+            ->where('driver_id', auth()->id())
+            ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipment->id)])
+            ->first();
+        
+        // Debug logging
+        \Log::info('Multi-Package Workflow Debug', [
+            'shipment_id' => $shipment->id,
+            'destination_id' => $destination->id,
+            'destination_status' => $destination->status,
+            'requested_status' => $requestedStatus,
+            'bulk_assignment_found' => $bulkAssignment ? true : false,
+            'bulk_assignment_id' => $bulkAssignment ? $bulkAssignment->id : null,
+        ]);
+        
+        if ($bulkAssignment) {
+            // Get shipment IDs in the order assigned by admin
+            $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
+            
+            \Log::info('Bulk Assignment Order', [
+                'shipment_ids_order' => $shipmentIds,
+                'current_shipment_id' => $shipment->id,
+            ]);
+            
+            // Get all destinations from these shipments in the correct order
+            $allDestinations = collect();
+            foreach ($shipmentIds as $shipmentId) {
+                $bulkShipment = Shipment::with('destinations')
+                    ->where('id', $shipmentId)
+                    ->where('assigned_driver_id', auth()->id())
+                    ->first();
                 
+                if ($bulkShipment) {
+                    foreach ($bulkShipment->destinations as $dest) {
+                        $allDestinations->push($dest);
+                    }
+                }
+            }
+            
+            $totalPackages = $allDestinations->count();
+            $currentPackageIndex = $allDestinations->search(function ($dest) use ($destination) {
+                return $dest->id === $destination->id;
+            });
+            
+            \Log::info('Package Position Debug', [
+                'total_packages' => $totalPackages,
+                'current_package_index' => $currentPackageIndex,
+                'all_destinations' => $allDestinations->map(function($dest) {
+                    return [
+                        'id' => $dest->id,
+                        'shipment_id' => $dest->shipment_id,
+                        'status' => $dest->status,
+                        'address' => substr($dest->delivery_address, 0, 30) . '...',
+                    ];
+                })->toArray()
+            ]);
+            
+            // Rule A: Hanya 1 paket → Full cycle allowed
+            if ($totalPackages === 1) {
                 return [
-                    'allowed' => $isLastPackage,
-                    'message' => $isLastPackage 
-                        ? 'Allowed: This is the last package, can proceed to next status'
-                        : 'Not allowed: You still have other packages to deliver first',
-                    'rule' => $isLastPackage ? 'Rule A: Last package' : 'Rule B: Multi-package restriction',
+                    'allowed' => true,
+                    'message' => 'Allowed: Single package workflow',
+                    'rule' => 'Rule A: Single package - full cycle allowed',
                     'package_info' => [
-                        'current_package_position' => 'Last delivered package',
-                        'remaining_packages' => $remainingDestinations,
-                        'is_last_package' => $isLastPackage,
+                        'total_packages' => $totalPackages,
+                        'current_package_position' => 1,
+                        'is_last_package' => true,
                     ],
-                    'explanation' => $isLastPackage 
-                        ? 'Ini adalah paket terakhir, boleh lanjut ke returning → finished'
-                        : 'Masih ada paket lain yang belum selesai, harus diselesaikan dulu'
+                    'explanation' => 'Kurir hanya punya 1 paket, boleh full cycle sampai finished'
                 ];
             }
-        }
-
-        $isLastPackage = ($currentPackageIndex !== false) && ($currentPackageIndex === $totalPackages - 1);
-
-        // Rule A: Hanya 1 paket → Full cycle allowed
-        if ($totalPackages === 1) {
+            
+            $isLastPackage = ($currentPackageIndex !== false) && ($currentPackageIndex === $totalPackages - 1);
+            
+            // 🔑 NEW: Rule C - Sequential Processing Validation
+            // Check if trying to start a package while previous packages are not completed
+            if (in_array($requestedStatus, ['in_progress', 'arrived', 'delivered']) && $currentPackageIndex !== false) {
+                // Check if any previous packages are not yet delivered
+                for ($i = 0; $i < $currentPackageIndex; $i++) {
+                    $previousPackage = $allDestinations[$i];
+                    if (!in_array($previousPackage->status, ['delivered', 'returning', 'finished'])) {
+                        return [
+                            'allowed' => false,
+                            'message' => 'Sequential processing required: Previous package must be completed first',
+                            'rule' => 'Rule C: Sequential Processing',
+                            'package_info' => [
+                                'total_packages' => $totalPackages,
+                                'current_package_position' => $currentPackageIndex + 1,
+                                'blocking_package_position' => $i + 1,
+                                'blocking_package_status' => $previousPackage->status,
+                                'blocking_package_status_label' => $this->getStatusLabel($previousPackage->status),
+                                'blocking_package_address' => $previousPackage->delivery_address,
+                                'is_last_package' => $isLastPackage,
+                            ],
+                            'explanation' => "Paket " . ($i + 1) . " harus diselesaikan dulu (status: {$this->getStatusLabel($previousPackage->status)}) sebelum Paket " . ($currentPackageIndex + 1) . " bisa dimulai"
+                        ];
+                    }
+                }
+            }
+            
+            // Rule B: Multi-package workflow - hanya untuk returning/finished
+            if (in_array($requestedStatus, ['returning', 'finished'])) {
+                \Log::info('Checking returning/finished permission', [
+                    'is_last_package' => $isLastPackage,
+                    'current_package_index' => $currentPackageIndex,
+                    'total_packages' => $totalPackages,
+                ]);
+                
+                if ($isLastPackage) {
+                    return [
+                        'allowed' => true,
+                        'message' => 'Allowed: This is the last package',
+                        'rule' => 'Rule B: Multi-package - last package can return',
+                        'package_info' => [
+                            'total_packages' => $totalPackages,
+                            'current_package_position' => $currentPackageIndex + 1,
+                            'is_last_package' => true,
+                        ],
+                        'explanation' => 'Ini adalah paket terakhir, boleh returning → finished'
+                    ];
+                } else {
+                    return [
+                        'allowed' => false,
+                        'message' => 'Not allowed: You still have other packages to deliver',
+                        'rule' => 'Rule B: Multi-package - only last package can return',
+                        'package_info' => [
+                            'total_packages' => $totalPackages,
+                            'current_package_position' => $currentPackageIndex + 1,
+                            'remaining_packages' => $totalPackages - ($currentPackageIndex + 1),
+                            'is_last_package' => false,
+                        ],
+                        'explanation' => 'Paket 1 & 2 mentok di delivered. Hanya paket terakhir yang bisa returning → finished'
+                    ];
+                }
+            }
+            
+        } else {
+            // Fallback: Single shipment or non-bulk assignment
             return [
                 'allowed' => true,
-                'message' => 'Allowed: Single package workflow',
-                'rule' => 'Rule A: Single package - full cycle allowed',
+                'message' => 'Allowed: Single shipment or non-bulk assignment',
+                'rule' => 'Rule A: Single shipment',
                 'package_info' => [
-                    'total_packages' => $totalPackages,
+                    'total_packages' => 1,
                     'current_package_position' => 1,
                     'is_last_package' => true,
                 ],
-                'explanation' => 'Kurir hanya punya 1 paket, boleh full cycle sampai finished'
+                'explanation' => 'Shipment tunggal atau bukan bulk assignment, boleh lanjut'
             ];
         }
 
-        // Rule B: Multi-package workflow
-        if ($requestedStatus === 'completed') {
-            // completed selalu diizinkan untuk semua paket
-            return [
-                'allowed' => true,
-                'message' => 'Allowed: completed status is always allowed',
-                'rule' => 'Rule B: Multi-package - completed allowed for all',
-                'package_info' => [
-                    'total_packages' => $totalPackages,
-                    'current_package_position' => $currentPackageIndex + 1,
-                    'is_last_package' => $isLastPackage,
-                ],
-                'explanation' => 'Status completed diizinkan untuk semua paket'
-            ];
-        }
-
-        if (in_array($requestedStatus, ['returning', 'finished'])) {
-            if ($isLastPackage) {
-                return [
-                    'allowed' => true,
-                    'message' => 'Allowed: This is the last package',
-                    'rule' => 'Rule B: Multi-package - last package can return',
-                    'package_info' => [
-                        'total_packages' => $totalPackages,
-                        'current_package_position' => $currentPackageIndex + 1,
-                        'is_last_package' => true,
-                    ],
-                    'explanation' => 'Ini adalah paket terakhir, boleh returning → finished'
-                ];
-            } else {
-                return [
-                    'allowed' => false,
-                    'message' => 'Not allowed: You still have other packages to deliver',
-                    'rule' => 'Rule B: Multi-package - only last package can return',
-                    'package_info' => [
-                        'total_packages' => $totalPackages,
-                        'current_package_position' => $currentPackageIndex + 1,
-                        'remaining_packages' => $totalPackages - ($currentPackageIndex + 1),
-                        'is_last_package' => false,
-                    ],
-                    'explanation' => 'Paket 1 & 2 mentok di delivered. Hanya paket terakhir yang bisa returning → finished'
-                ];
-            }
-        }
-
-        // Default allow untuk status lainnya
+        // Default allow untuk status lainnya (setelah sequential check)
         return [
             'allowed' => true,
             'message' => 'Allowed: Status transition permitted',
             'rule' => 'Default: Normal status transition',
             'package_info' => [
-                'total_packages' => $totalPackages,
-                'current_package_position' => $currentPackageIndex !== false ? $currentPackageIndex + 1 : 'Unknown',
-                'is_last_package' => $isLastPackage,
+                'total_packages' => $totalPackages ?? 1,
+                'current_package_position' => ($currentPackageIndex ?? 0) + 1,
+                'is_last_package' => $isLastPackage ?? true,
             ],
             'explanation' => 'Transisi status normal diizinkan'
         ];
+    }
+
+    /**
+     * Remove shipment from bulk assignment when takeover occurs
+     */
+    private function removeShipmentFromBulkAssignment(int $shipmentId, int $driverId): void
+    {
+        try {
+            // Find bulk assignment containing this shipment for this driver
+            $bulkAssignment = DB::table('bulk_assignments')
+                ->where('driver_id', $driverId)
+                ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipmentId)])
+                ->first();
+
+            if ($bulkAssignment) {
+                $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
+                
+                // Remove the shipment from the array
+                $updatedShipmentIds = array_values(array_filter($shipmentIds, function($id) use ($shipmentId) {
+                    return $id !== $shipmentId;
+                }));
+
+                // Update bulk assignment
+                if (empty($updatedShipmentIds)) {
+                    // If no shipments left, delete the bulk assignment
+                    DB::table('bulk_assignments')->where('id', $bulkAssignment->id)->delete();
+                    \Log::info('Bulk assignment deleted (no shipments left)', [
+                        'bulk_assignment_id' => $bulkAssignment->id,
+                        'removed_shipment_id' => $shipmentId,
+                    ]);
+                } else {
+                    // Update with remaining shipments
+                    DB::table('bulk_assignments')
+                        ->where('id', $bulkAssignment->id)
+                        ->update([
+                            'shipment_ids' => json_encode($updatedShipmentIds),
+                            'shipment_count' => count($updatedShipmentIds),
+                        ]);
+                    \Log::info('Shipment removed from bulk assignment', [
+                        'bulk_assignment_id' => $bulkAssignment->id,
+                        'removed_shipment_id' => $shipmentId,
+                        'remaining_shipments' => $updatedShipmentIds,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('Failed to remove shipment from bulk assignment', [
+                'shipment_id' => $shipmentId,
+                'driver_id' => $driverId,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
 
