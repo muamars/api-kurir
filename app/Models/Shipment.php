@@ -11,7 +11,7 @@ class Shipment extends Model
 {
     use HasFactory;
 
-    const STATUS_CREATED = 'created';
+    const STATUS_PENDING = 'pending';
 
     const STATUS_ASSIGNED = 'assigned';
 

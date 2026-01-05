@@ -207,6 +207,9 @@ class ShipmentProgressController extends Controller
             // === Update status destinasi dengan validasi flow ===
             $this->updateDestinationStatus($destination, $request->status);
 
+            // ✅ NEW: Auto-update shipment status based on destination progress
+            $this->updateShipmentStatusBasedOnDestinations($shipment);
+
             // === Handle status DELIVERED: kirim notifikasi ===
             if ($request->status === 'delivered') {
                 try {
@@ -292,6 +295,9 @@ class ShipmentProgressController extends Controller
                         'reason' => 'All destinations finished',
                         'driver_id' => auth()->id(),
                     ]);
+
+                    // ✅ NEW: Update semua paket dalam bulk assignment ketika paket terakhir selesai
+                    $this->updateBulkAssignmentStatusOnCompletion($shipment, auth()->id());
                 }
             }
 
@@ -343,14 +349,102 @@ class ShipmentProgressController extends Controller
         $destination->update(['status' => $newStatus]);
     }
 
+    /**
+     * ✅ NEW: Auto-update shipment status based on destination progress
+     * This ensures consistency between bulk assignment and individual shipment endpoints
+     */
+    private function updateShipmentStatusBasedOnDestinations(Shipment $shipment): void
+    {
+        // Reload destinations to get latest status
+        $shipment->load('destinations');
+        $destinations = $shipment->destinations;
+        
+        if ($destinations->isEmpty()) {
+            return;
+        }
+
+        $oldShipmentStatus = $shipment->status;
+        $newShipmentStatus = $this->determineShipmentStatusFromDestinations($destinations);
+
+        // Only update if status actually changed
+        if ($newShipmentStatus !== $oldShipmentStatus) {
+            $shipment->update(['status' => $newShipmentStatus]);
+            
+            \Log::info('Shipment status auto-updated based on destinations', [
+                'shipment_id' => $shipment->id,
+                'old_status' => $oldShipmentStatus,
+                'new_status' => $newShipmentStatus,
+                'destination_statuses' => $destinations->pluck('status', 'id')->toArray(),
+                'trigger' => 'destination_progress_update',
+            ]);
+        }
+    }
+
+    /**
+     * Determine shipment status based on destination statuses
+     */
+    private function determineShipmentStatusFromDestinations($destinations): string
+    {
+        $statusCounts = $destinations->countBy('status');
+        $totalDestinations = $destinations->count();
+
+        // All destinations finished → shipment completed
+        if ($statusCounts->get('finished', 0) === $totalDestinations) {
+            return 'completed';
+        }
+
+        // Any destination in progress → shipment in progress
+        if ($statusCounts->get('in_progress', 0) > 0 || 
+            $statusCounts->get('arrived', 0) > 0 || 
+            $statusCounts->get('delivered', 0) > 0 || 
+            $statusCounts->get('returning', 0) > 0) {
+            return 'in_progress';
+        }
+
+        // Any destination picked → shipment in progress
+        if ($statusCounts->get('picked', 0) > 0) {
+            return 'in_progress';
+        }
+
+        // All destinations pending and shipment is assigned → keep assigned
+        if ($statusCounts->get('pending', 0) === $totalDestinations) {
+            return 'assigned'; // Keep as assigned until driver starts
+        }
+
+        // Default fallback
+        return 'assigned';
+    }
+
     public function getProgress(Shipment $shipment): JsonResponse
     {
+        $user = auth()->user();
+        
+        // Authorization: Admin bisa lihat semua, Kurir hanya yang assigned ke mereka, User hanya yang mereka buat
+        if (!$user->hasRole('Admin')) {
+            if ($user->hasRole('Kurir')) {
+                // Kurir hanya bisa lihat shipment yang assigned ke mereka
+                if ($shipment->assigned_driver_id !== $user->id) {
+                    return response()->json([
+                        'message' => 'You are not assigned to this shipment'
+                    ], 403);
+                }
+            } else {
+                // User biasa hanya bisa lihat shipment yang mereka buat
+                if ($shipment->created_by !== $user->id) {
+                    return response()->json([
+                        'message' => 'You can only view your own shipments'
+                    ], 403);
+                }
+            }
+        }
+
         $progress = $shipment->progress()
             ->with(['destination', 'driver'])
             ->orderBy('progress_time', 'desc')
             ->get();
 
         return response()->json([
+            'message' => 'Shipment progress retrieved successfully',
             'data' => $progress,
         ]);
     }
@@ -1384,6 +1478,694 @@ class ShipmentProgressController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * ✅ NEW: Update semua paket dalam bulk assignment ketika paket terakhir selesai
+     * Ini memastikan semua paket A, B, C dalam bulk assignment ikut berubah status menjadi completed
+     */
+    private function updateBulkAssignmentStatusOnCompletion(Shipment $completedShipment, int $driverId): void
+    {
+        try {
+            // Find bulk assignment containing this shipment
+            $bulkAssignment = DB::table('bulk_assignments')
+                ->where('driver_id', $driverId)
+                ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)])
+                ->first();
+
+            if (!$bulkAssignment) {
+                \Log::info('No bulk assignment found for completed shipment', [
+                    'shipment_id' => $completedShipment->id,
+                    'driver_id' => $driverId,
+                ]);
+                return;
+            }
+
+            $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
+            
+            // Get all shipments in this bulk assignment
+            $allBulkShipments = Shipment::with('destinations')
+                ->whereIn('id', $shipmentIds)
+                ->where('assigned_driver_id', $driverId)
+                ->get();
+
+            \Log::info('Checking bulk assignment completion status', [
+                'bulk_assignment_id' => $bulkAssignment->id,
+                'total_shipments' => $allBulkShipments->count(),
+                'shipment_ids' => $shipmentIds,
+            ]);
+
+            // Check if this is the last package (paket terakhir) that just finished
+            $isLastPackage = $this->isLastPackageInBulkAssignment($completedShipment, $allBulkShipments, $shipmentIds);
+            
+            if ($isLastPackage) {
+                \Log::info('Last package completed - updating all bulk assignment shipments', [
+                    'completed_shipment_id' => $completedShipment->id,
+                    'bulk_assignment_id' => $bulkAssignment->id,
+                ]);
+
+                $updatedCount = 0;
+                foreach ($allBulkShipments as $bulkShipment) {
+                    // Skip the already completed shipment
+                    if ($bulkShipment->id === $completedShipment->id) {
+                        continue;
+                    }
+
+                    // Update shipment status to completed if not already
+                    if ($bulkShipment->status !== 'completed') {
+                        $oldStatus = $bulkShipment->status;
+                        $bulkShipment->update(['status' => 'completed']);
+                        $updatedCount++;
+
+                        \Log::info('Bulk shipment status updated to completed', [
+                            'shipment_id' => $bulkShipment->id,
+                            'shipment_code' => $bulkShipment->shipment_id,
+                            'old_status' => $oldStatus,
+                            'new_status' => 'completed',
+                            'reason' => 'Last package in bulk assignment completed',
+                            'trigger_shipment_id' => $completedShipment->id,
+                        ]);
+                    }
+                }
+
+                \Log::info('Bulk assignment completion update finished', [
+                    'bulk_assignment_id' => $bulkAssignment->id,
+                    'updated_shipments_count' => $updatedCount,
+                    'trigger_shipment_id' => $completedShipment->id,
+                ]);
+            } else {
+                \Log::info('Not the last package - no bulk update needed', [
+                    'completed_shipment_id' => $completedShipment->id,
+                    'bulk_assignment_id' => $bulkAssignment->id,
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Failed to update bulk assignment status on completion', [
+                'shipment_id' => $completedShipment->id,
+                'driver_id' => $driverId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+    }
+
+    /**
+     * ✅ NEW: Get bulk assignment route duration analysis (Admin version)
+     * Admin bisa melihat laporan durasi rute untuk semua kurir
+     */
+    public function getAdminBulkAssignmentRouteDuration(Request $request, $bulkAssignmentId): JsonResponse
+    {
+        $user = $request->user();
+        
+        // Only admin can access this endpoint
+        if (!$user->hasRole('Admin')) {
+            return response()->json([
+                'message' => 'This endpoint is only for admin'
+            ], 403);
+        }
+
+        // Get bulk assignment (admin can see all)
+        $bulkAssignment = DB::table('bulk_assignments as ba')
+            ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+            ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
+            ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+            ->where('ba.id', $bulkAssignmentId)
+            ->select([
+                'ba.*',
+                'admin.name as admin_name',
+                'driver.name as driver_name',
+                'driver.phone as driver_phone',
+                'vt.name as vehicle_type_name'
+            ])
+            ->first();
+
+        if (!$bulkAssignment) {
+            return response()->json([
+                'message' => 'Bulk assignment not found'
+            ], 404);
+        }
+
+        $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
+        
+        // Get shipments with destinations and status histories in the correct order
+        $orderedShipments = collect();
+        foreach ($shipmentIds as $shipmentId) {
+            $shipment = Shipment::with([
+                'destinations.statusHistories',
+                'creator:id,name',
+                'category:id,name'
+            ])
+            ->where('id', $shipmentId)
+            ->first();
+            
+            if ($shipment) {
+                $orderedShipments->push($shipment);
+            }
+        }
+
+        if ($orderedShipments->isEmpty()) {
+            return response()->json([
+                'message' => 'No shipments found in this bulk assignment'
+            ], 404);
+        }
+
+        // Calculate route duration analysis
+        $routeAnalysis = $this->calculateBulkRouteAnalysis($orderedShipments);
+
+        return response()->json([
+            'message' => 'Admin bulk assignment route duration retrieved successfully',
+            'data' => [
+                'bulk_assignment' => [
+                    'id' => $bulkAssignment->id,
+                    'assigned_by' => $bulkAssignment->admin_name,
+                    'driver' => [
+                        'name' => $bulkAssignment->driver_name,
+                        'phone' => $bulkAssignment->driver_phone,
+                    ],
+                    'vehicle_type' => $bulkAssignment->vehicle_type_name,
+                    'assigned_at' => $bulkAssignment->assigned_at,
+                    'assigned_at_formatted' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->format('d M Y, H:i'),
+                    'total_shipments' => $bulkAssignment->shipment_count,
+                ],
+                'route_analysis' => $routeAnalysis,
+                'performance_metrics' => $this->calculatePerformanceMetrics($routeAnalysis),
+            ],
+        ]);
+    }
+
+    /**
+     * ✅ NEW: Get bulk assignment route duration analysis (Driver version)
+     * Menghitung durasi perjalanan dari paket A → B → C → kembali ke kantor
+     */
+    public function getBulkAssignmentRouteDuration(Request $request, $bulkAssignmentId): JsonResponse
+    {
+        $user = $request->user();
+        
+        // Only drivers can access this endpoint
+        if (!$user->hasRole('Kurir')) {
+            return response()->json([
+                'message' => 'This endpoint is only for drivers'
+            ], 403);
+        }
+
+        // Get bulk assignment and verify it belongs to this driver
+        $bulkAssignment = DB::table('bulk_assignments as ba')
+            ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+            ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+            ->where('ba.id', $bulkAssignmentId)
+            ->where('ba.driver_id', $user->id)
+            ->select([
+                'ba.*',
+                'admin.name as admin_name',
+                'vt.name as vehicle_type_name'
+            ])
+            ->first();
+
+        if (!$bulkAssignment) {
+            return response()->json([
+                'message' => 'Bulk assignment not found or not assigned to you'
+            ], 404);
+        }
+
+        $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
+        
+        // Get shipments with destinations and status histories in the correct order
+        $orderedShipments = collect();
+        foreach ($shipmentIds as $shipmentId) {
+            $shipment = Shipment::with([
+                'destinations.statusHistories',
+                'creator:id,name',
+                'category:id,name'
+            ])
+            ->where('id', $shipmentId)
+            ->where('assigned_driver_id', $user->id)
+            ->first();
+            
+            if ($shipment) {
+                $orderedShipments->push($shipment);
+            }
+        }
+
+        if ($orderedShipments->isEmpty()) {
+            return response()->json([
+                'message' => 'No shipments found in this bulk assignment'
+            ], 404);
+        }
+
+        // Calculate route duration analysis
+        $routeAnalysis = $this->calculateBulkRouteAnalysis($orderedShipments);
+
+        return response()->json([
+            'message' => 'Bulk assignment route duration retrieved successfully',
+            'data' => [
+                'bulk_assignment' => [
+                    'id' => $bulkAssignment->id,
+                    'assigned_by' => $bulkAssignment->admin_name,
+                    'vehicle_type' => $bulkAssignment->vehicle_type_name,
+                    'assigned_at' => $bulkAssignment->assigned_at,
+                    'assigned_at_formatted' => \Carbon\Carbon::parse($bulkAssignment->assigned_at)->format('d M Y, H:i'),
+                ],
+                'route_analysis' => $routeAnalysis,
+            ],
+        ]);
+    }
+
+    /**
+     * Calculate comprehensive route analysis for bulk assignment
+     * Paket A → Paket B → Paket C → Kembali ke Kantor
+     */
+    private function calculateBulkRouteAnalysis($orderedShipments): array
+    {
+        $routeSegments = [];
+        $totalDeliveryDuration = 0;
+        $totalReturnDuration = 0;
+        $overallStartTime = null;
+        $overallEndTime = null;
+
+        // Analyze each delivery segment (A → B → C)
+        foreach ($orderedShipments as $index => $shipment) {
+            $destination = $shipment->destinations->first(); // Assuming 1 destination per shipment
+            
+            if (!$destination) {
+                continue;
+            }
+
+            $segmentAnalysis = $this->analyzeDeliverySegment($destination, $index + 1);
+            
+            if ($segmentAnalysis) {
+                $routeSegments[] = $segmentAnalysis;
+                
+                // Track overall timing
+                if (!$overallStartTime && isset($segmentAnalysis['start_time'])) {
+                    $overallStartTime = $segmentAnalysis['start_time'];
+                }
+                
+                if (isset($segmentAnalysis['delivery_duration_minutes'])) {
+                    $totalDeliveryDuration += $segmentAnalysis['delivery_duration_minutes'];
+                }
+                
+                if (isset($segmentAnalysis['delivered_at'])) {
+                    $overallEndTime = $segmentAnalysis['delivered_at'];
+                }
+            }
+        }
+
+        // Analyze return journey (dari paket terakhir kembali ke kantor)
+        $returnAnalysis = $this->analyzeReturnJourney($orderedShipments->last());
+        
+        if ($returnAnalysis && isset($returnAnalysis['return_duration_minutes'])) {
+            $totalReturnDuration = $returnAnalysis['return_duration_minutes'];
+            $overallEndTime = $returnAnalysis['finished_at'];
+        }
+
+        // Calculate total route duration
+        $totalRouteDuration = null;
+        if ($overallStartTime && $overallEndTime) {
+            $startTime = \Carbon\Carbon::parse($overallStartTime);
+            $endTime = \Carbon\Carbon::parse($overallEndTime);
+            $duration = $endTime->diff($startTime);
+            $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
+            
+            $totalRouteDuration = [
+                'total_minutes' => $totalMinutes,
+                'total_hours' => round($totalMinutes / 60, 2),
+                'human_readable' => $this->formatDuration($duration),
+                'start_time' => $overallStartTime,
+                'end_time' => $overallEndTime,
+            ];
+        }
+
+        return [
+            'delivery_segments' => $routeSegments,
+            'return_journey' => $returnAnalysis,
+            'summary' => [
+                'total_packages' => $orderedShipments->count(),
+                'total_delivery_duration' => [
+                    'minutes' => $totalDeliveryDuration,
+                    'hours' => round($totalDeliveryDuration / 60, 2),
+                    'human_readable' => $this->minutesToHumanReadable($totalDeliveryDuration),
+                ],
+                'total_return_duration' => [
+                    'minutes' => $totalReturnDuration,
+                    'hours' => round($totalReturnDuration / 60, 2),
+                    'human_readable' => $this->minutesToHumanReadable($totalReturnDuration),
+                ],
+                'total_route_duration' => $totalRouteDuration,
+                'average_delivery_time_per_package' => $orderedShipments->count() > 0 ? 
+                    round($totalDeliveryDuration / $orderedShipments->count(), 2) : 0,
+            ],
+        ];
+    }
+
+    /**
+     * Analyze individual delivery segment (e.g., Paket A: mulai → sampai → diterima)
+     */
+    private function analyzeDeliverySegment($destination, int $packageNumber): ?array
+    {
+        $histories = $destination->statusHistories()
+            ->orderBy('changed_at', 'asc')
+            ->get();
+
+        if ($histories->isEmpty()) {
+            return null;
+        }
+
+        $statusTimes = [];
+        foreach ($histories as $history) {
+            $statusTimes[$history->new_status] = $history->changed_at;
+        }
+
+        $segmentData = [
+            'package_number' => $packageNumber,
+            'package_label' => "Paket " . $this->numberToLetter($packageNumber),
+            'destination_address' => $destination->delivery_address,
+            'receiver_name' => $destination->receiver_name,
+            'current_status' => $destination->status,
+            'status_label' => $this->getStatusLabel($destination->status),
+        ];
+
+        // Calculate delivery duration (mulai pengiriman → diterima)
+        $startStatus = $statusTimes['in_progress'] ?? $statusTimes['picked'] ?? $statusTimes['pending'] ?? null;
+        $deliveredTime = $statusTimes['delivered'] ?? null;
+
+        if ($startStatus && $deliveredTime) {
+            $duration = $deliveredTime->diff($startStatus);
+            $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
+            
+            $segmentData['delivery_duration'] = [
+                'start_time' => $startStatus->format('Y-m-d H:i:s'),
+                'delivered_at' => $deliveredTime->format('Y-m-d H:i:s'),
+                'duration_minutes' => $totalMinutes,
+                'duration_hours' => round($totalMinutes / 60, 2),
+                'human_readable' => $this->formatDuration($duration),
+            ];
+            
+            $segmentData['delivery_duration_minutes'] = $totalMinutes;
+            $segmentData['start_time'] = $startStatus->format('Y-m-d H:i:s');
+            $segmentData['delivered_at'] = $deliveredTime->format('Y-m-d H:i:s');
+        }
+
+        // Add detailed status timeline
+        $timeline = [];
+        $statusFlow = ['pending', 'picked', 'in_progress', 'arrived', 'delivered'];
+        
+        for ($i = 0; $i < count($statusFlow) - 1; $i++) {
+            $fromStatus = $statusFlow[$i];
+            $toStatus = $statusFlow[$i + 1];
+            
+            if (isset($statusTimes[$fromStatus]) && isset($statusTimes[$toStatus])) {
+                $stepDuration = $statusTimes[$toStatus]->diff($statusTimes[$fromStatus]);
+                $stepMinutes = ($stepDuration->days * 24 * 60) + ($stepDuration->h * 60) + $stepDuration->i;
+                
+                $timeline[] = [
+                    'from_status' => $fromStatus,
+                    'to_status' => $toStatus,
+                    'from_label' => $this->getStatusLabel($fromStatus),
+                    'to_label' => $this->getStatusLabel($toStatus),
+                    'duration_minutes' => $stepMinutes,
+                    'human_readable' => $this->formatDuration($stepDuration),
+                    'start_time' => $statusTimes[$fromStatus]->format('Y-m-d H:i:s'),
+                    'end_time' => $statusTimes[$toStatus]->format('Y-m-d H:i:s'),
+                ];
+            }
+        }
+        
+        $segmentData['detailed_timeline'] = $timeline;
+
+        return $segmentData;
+    }
+
+    /**
+     * Analyze return journey (dari paket terakhir kembali ke kantor)
+     */
+    private function analyzeReturnJourney($lastShipment): ?array
+    {
+        if (!$lastShipment) {
+            return null;
+        }
+
+        $lastDestination = $lastShipment->destinations->first();
+        if (!$lastDestination) {
+            return null;
+        }
+
+        $histories = $lastDestination->statusHistories()
+            ->orderBy('changed_at', 'asc')
+            ->get();
+
+        $statusTimes = [];
+        foreach ($histories as $history) {
+            $statusTimes[$history->new_status] = $history->changed_at;
+        }
+
+        $returningTime = $statusTimes['returning'] ?? null;
+        $finishedTime = $statusTimes['finished'] ?? null;
+
+        if (!$returningTime || !$finishedTime) {
+            return [
+                'status' => 'incomplete',
+                'message' => 'Return journey not completed yet',
+                'returning_time' => $returningTime ? $returningTime->format('Y-m-d H:i:s') : null,
+                'finished_time' => $finishedTime ? $finishedTime->format('Y-m-d H:i:s') : null,
+            ];
+        }
+
+        $duration = $finishedTime->diff($returningTime);
+        $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
+
+        return [
+            'status' => 'completed',
+            'return_duration' => [
+                'returning_at' => $returningTime->format('Y-m-d H:i:s'),
+                'finished_at' => $finishedTime->format('Y-m-d H:i:s'),
+                'duration_minutes' => $totalMinutes,
+                'duration_hours' => round($totalMinutes / 60, 2),
+                'human_readable' => $this->formatDuration($duration),
+            ],
+            'return_duration_minutes' => $totalMinutes,
+            'finished_at' => $finishedTime->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
+     * Convert number to letter (1=A, 2=B, 3=C, etc.)
+     */
+    private function numberToLetter(int $number): string
+    {
+        return chr(64 + $number); // 65 = A, 66 = B, etc.
+    }
+
+    /**
+     * Convert minutes to human readable format
+     */
+    private function minutesToHumanReadable(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return $minutes . ' menit';
+        }
+        
+        $hours = floor($minutes / 60);
+        $remainingMinutes = $minutes % 60;
+        
+        if ($remainingMinutes === 0) {
+            return $hours . ' jam';
+        }
+        
+        return $hours . ' jam ' . $remainingMinutes . ' menit';
+    }
+
+    /**
+     * ✅ NEW: Calculate performance metrics for admin reports
+     */
+    private function calculatePerformanceMetrics(array $routeAnalysis): array
+    {
+        $summary = $routeAnalysis['summary'] ?? [];
+        $deliverySegments = $routeAnalysis['delivery_segments'] ?? [];
+        $returnJourney = $routeAnalysis['return_journey'] ?? [];
+
+        $metrics = [
+            'efficiency_score' => 0,
+            'speed_rating' => 'Unknown',
+            'completion_status' => 'Incomplete',
+            'recommendations' => [],
+        ];
+
+        // Calculate efficiency score (0-100)
+        $totalPackages = $summary['total_packages'] ?? 0;
+        $avgDeliveryTime = $summary['average_delivery_time_per_package'] ?? 0;
+        
+        if ($totalPackages > 0 && $avgDeliveryTime > 0) {
+            // Base efficiency on average delivery time (lower is better)
+            // Assume 30 minutes per package is optimal
+            $optimalTimePerPackage = 30; // minutes
+            $efficiencyRatio = $optimalTimePerPackage / max($avgDeliveryTime, 1);
+            $metrics['efficiency_score'] = min(100, round($efficiencyRatio * 100, 1));
+        }
+
+        // Speed rating based on average delivery time
+        if ($avgDeliveryTime > 0) {
+            if ($avgDeliveryTime <= 20) {
+                $metrics['speed_rating'] = 'Sangat Cepat';
+            } elseif ($avgDeliveryTime <= 30) {
+                $metrics['speed_rating'] = 'Cepat';
+            } elseif ($avgDeliveryTime <= 45) {
+                $metrics['speed_rating'] = 'Normal';
+            } elseif ($avgDeliveryTime <= 60) {
+                $metrics['speed_rating'] = 'Lambat';
+            } else {
+                $metrics['speed_rating'] = 'Sangat Lambat';
+            }
+        }
+
+        // Completion status
+        $completedSegments = 0;
+        foreach ($deliverySegments as $segment) {
+            if (isset($segment['delivery_duration'])) {
+                $completedSegments++;
+            }
+        }
+
+        if ($completedSegments === $totalPackages && isset($returnJourney['status']) && $returnJourney['status'] === 'completed') {
+            $metrics['completion_status'] = 'Selesai Semua';
+        } elseif ($completedSegments === $totalPackages) {
+            $metrics['completion_status'] = 'Pengiriman Selesai, Belum Kembali';
+        } elseif ($completedSegments > 0) {
+            $metrics['completion_status'] = "Sebagian Selesai ({$completedSegments}/{$totalPackages})";
+        } else {
+            $metrics['completion_status'] = 'Belum Dimulai';
+        }
+
+        // Generate recommendations
+        $recommendations = [];
+        
+        if ($avgDeliveryTime > 45) {
+            $recommendations[] = 'Waktu pengiriman per paket terlalu lama, pertimbangkan optimasi rute';
+        }
+        
+        if ($metrics['efficiency_score'] < 70) {
+            $recommendations[] = 'Efisiensi pengiriman perlu ditingkatkan';
+        }
+        
+        if (isset($returnJourney['return_duration']['duration_minutes']) && $returnJourney['return_duration']['duration_minutes'] > 60) {
+            $recommendations[] = 'Waktu perjalanan pulang terlalu lama';
+        }
+        
+        if (empty($recommendations)) {
+            $recommendations[] = 'Performa pengiriman sudah baik';
+        }
+        
+        $metrics['recommendations'] = $recommendations;
+
+        // Additional detailed metrics
+        $metrics['detailed_analysis'] = [
+            'total_route_time' => $summary['total_route_duration']['human_readable'] ?? 'Belum selesai',
+            'delivery_efficiency' => [
+                'average_per_package' => round($avgDeliveryTime, 1) . ' menit',
+                'fastest_delivery' => $this->getFastestDelivery($deliverySegments),
+                'slowest_delivery' => $this->getSlowestDelivery($deliverySegments),
+            ],
+            'return_efficiency' => [
+                'return_time' => isset($returnJourney['return_duration']) ? 
+                    $returnJourney['return_duration']['human_readable'] : 'Belum kembali',
+                'return_speed_rating' => $this->getReturnSpeedRating($returnJourney),
+            ],
+        ];
+
+        return $metrics;
+    }
+
+    /**
+     * Get fastest delivery from segments
+     */
+    private function getFastestDelivery(array $segments): string
+    {
+        $fastestTime = PHP_INT_MAX;
+        $fastestPackage = null;
+        
+        foreach ($segments as $segment) {
+            if (isset($segment['delivery_duration']['duration_minutes'])) {
+                $time = $segment['delivery_duration']['duration_minutes'];
+                if ($time < $fastestTime) {
+                    $fastestTime = $time;
+                    $fastestPackage = $segment['package_label'];
+                }
+            }
+        }
+        
+        return $fastestPackage ? "{$fastestPackage}: {$fastestTime} menit" : 'Belum ada data';
+    }
+
+    /**
+     * Get slowest delivery from segments
+     */
+    private function getSlowestDelivery(array $segments): string
+    {
+        $slowestTime = 0;
+        $slowestPackage = null;
+        
+        foreach ($segments as $segment) {
+            if (isset($segment['delivery_duration']['duration_minutes'])) {
+                $time = $segment['delivery_duration']['duration_minutes'];
+                if ($time > $slowestTime) {
+                    $slowestTime = $time;
+                    $slowestPackage = $segment['package_label'];
+                }
+            }
+        }
+        
+        return $slowestPackage ? "{$slowestPackage}: {$slowestTime} menit" : 'Belum ada data';
+    }
+
+    /**
+     * Get return speed rating
+     */
+    private function getReturnSpeedRating(array $returnJourney): string
+    {
+        if (!isset($returnJourney['return_duration']['duration_minutes'])) {
+            return 'Belum kembali';
+        }
+        
+        $returnTime = $returnJourney['return_duration']['duration_minutes'];
+        
+        if ($returnTime <= 15) {
+            return 'Sangat Cepat';
+        } elseif ($returnTime <= 30) {
+            return 'Cepat';
+        } elseif ($returnTime <= 45) {
+            return 'Normal';
+        } elseif ($returnTime <= 60) {
+            return 'Lambat';
+        } else {
+            return 'Sangat Lambat';
+        }
+    }
+
+    /**
+     * Check if this is the last package in bulk assignment based on multi-package rules
+     */
+    private function isLastPackageInBulkAssignment(Shipment $completedShipment, $allBulkShipments, array $shipmentIds): bool
+    {
+        // Get the position of completed shipment in the original admin-selected order
+        $completedShipmentIndex = array_search($completedShipment->id, $shipmentIds);
+        
+        if ($completedShipmentIndex === false) {
+            return false;
+        }
+
+        // According to multi-package rules: only the last package can go to finished
+        // So if this shipment reached finished, it must be the last package
+        $isLastInOrder = $completedShipmentIndex === (count($shipmentIds) - 1);
+        
+        \Log::info('Checking if last package in bulk assignment', [
+            'completed_shipment_id' => $completedShipment->id,
+            'completed_shipment_index' => $completedShipmentIndex,
+            'total_shipments' => count($shipmentIds),
+            'is_last_in_order' => $isLastInOrder,
+            'shipment_order' => $shipmentIds,
+        ]);
+
+        return $isLastInOrder;
     }
 }
 

@@ -135,7 +135,7 @@ class ShipmentController extends Controller
                 'created_by' => auth()->id(),
                 'category_id' => $request->category_id,
                 'vehicle_type_id' => $request->vehicle_type_id,
-                'status' => 'created', // Default status when created
+                'status' => 'pending', // ✅ FIXED: Use valid status from enum
                 'notes' => $request->notes,
                 'courier_notes' => $request->courier_notes,
                 'priority' => $request->priority ?? 'regular',
@@ -207,9 +207,9 @@ class ShipmentController extends Controller
     {
         $this->authorize('approve-shipments');
 
-        if (! in_array($shipment->status, ['created', 'pending'])) {
+        if (! in_array($shipment->status, ['pending'])) {
             return response()->json([
-                'message' => 'Only created or pending shipments can be approved',
+                'message' => 'Only pending shipments can be approved',
             ], 400);
         }
 
@@ -287,12 +287,12 @@ class ShipmentController extends Controller
             DB::beginTransaction();
 
             $shipments = Shipment::whereIn('id', $request->shipment_ids)
-                ->whereIn('status', ['created', 'pending'])
+                ->whereIn('status', ['pending'])
                 ->get();
 
             if ($shipments->count() !== count($request->shipment_ids)) {
                 return response()->json([
-                    'message' => 'Some shipments are not in created or pending status',
+                    'message' => 'Some shipments are not in pending status',
                 ], 400);
             }
 
@@ -461,9 +461,9 @@ class ShipmentController extends Controller
     {
         $this->authorize('assign-drivers');
 
-        if (! in_array($shipment->status, ['created', 'pending'])) {
+        if (! in_array($shipment->status, ['pending'])) {
             return response()->json([
-                'message' => 'Only created or pending shipments can be set to pending',
+                'message' => 'Only pending shipments can be set to pending',
             ], 400);
         }
 
@@ -531,9 +531,9 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if (! in_array($shipment->status, ['created', 'pending'])) {
+        if (! in_array($shipment->status, ['pending'])) {
             return response()->json([
-                'message' => 'Only created or pending shipments can be cancelled',
+                'message' => 'Only pending shipments can be cancelled',
             ], 400);
         }
 
@@ -1075,8 +1075,6 @@ class ShipmentController extends Controller
     private function getShipmentStatusLabel(string $status): string
     {
         switch ($status) {
-            case 'created':
-                return 'Dibuat';
             case 'pending':
                 return 'Menunggu Persetujuan';
             case 'approved':

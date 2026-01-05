@@ -80,6 +80,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/bulk-assign-driver', [ShipmentController::class, 'bulkAssignDriver']);
         Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
+        Route::get('/shipments/bulk-assignments/{bulkAssignmentId}/route-duration', [ShipmentProgressController::class, 'getAdminBulkAssignmentRouteDuration']);
         
         Route::get('/shipments/{shipment}', [ShipmentController::class, 'show']);
         Route::put('/shipments/{shipment}', [ShipmentController::class, 'update']);
@@ -96,6 +97,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Driver bulk assignments (Kurir only)
         Route::get('/driver/bulk-assignments', [ShipmentController::class, 'getMyBulkAssignments']);
         Route::get('/driver/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getMyBulkAssignmentDetail']);
+        Route::get('/driver/bulk-assignments/{bulkAssignmentId}/route-duration', [ShipmentProgressController::class, 'getBulkAssignmentRouteDuration']);
 
         // Progress tracking
         Route::post('/shipments/{shipment}/destinations/{destination}/progress', [ShipmentProgressController::class, 'updateProgress']);

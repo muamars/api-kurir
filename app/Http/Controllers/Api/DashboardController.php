@@ -574,7 +574,6 @@ class DashboardController extends Controller
     private function getStatusLabel(string $status): string
     {
         return match ($status) {
-            'created' => 'Dibuat',
             'pending' => 'Menunggu Persetujuan',
             'assigned' => 'Ditugaskan',
             'in_progress' => 'Dalam Perjalanan',
@@ -634,17 +633,12 @@ class DashboardController extends Controller
             'summary' => [
                 'completed' => $statusBreakdown->get('completed')?->count ?? 0,
                 'in_progress' => $statusBreakdown->get('in_progress')?->count ?? 0,
-                'pending' => ($statusBreakdown->get('created')?->count ?? 0) + ($statusBreakdown->get('pending')?->count ?? 0) + ($statusBreakdown->get('assigned')?->count ?? 0),
+                'pending' => ($statusBreakdown->get('pending')?->count ?? 0) + ($statusBreakdown->get('assigned')?->count ?? 0),
                 'cancelled' => $statusBreakdown->get('cancelled')?->count ?? 0,
                 'urgent' => $priorityBreakdown->get('urgent')?->count ?? 0,
                 'regular' => $priorityBreakdown->get('regular')?->count ?? 0,
             ],
             'status_breakdown' => [
-                'created' => [
-                    'count' => $statusBreakdown->get('created')?->count ?? 0,
-                    'label' => 'Dibuat',
-                    'percentage' => $totalShipments > 0 ? round((($statusBreakdown->get('created')?->count ?? 0) / $totalShipments) * 100, 2) : 0,
-                ],
                 'pending' => [
                     'count' => $statusBreakdown->get('pending')?->count ?? 0,
                     'label' => 'Menunggu Persetujuan',
@@ -775,7 +769,6 @@ class DashboardController extends Controller
     private function getStatusColor(string $status): string
     {
         return match ($status) {
-            'created' => 'gray',
             'pending' => 'yellow',
             'approved' => 'blue',
             'assigned' => 'indigo',

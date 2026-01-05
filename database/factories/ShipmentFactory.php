@@ -15,7 +15,7 @@ class ShipmentFactory extends Factory
         return [
             'title' => $this->faker->sentence(),
             'description' => $this->faker->paragraph(),
-            'status' => 'created',
+            'status' => 'pending',
             'priority' => $this->faker->randomElement(['low', 'normal', 'high', 'urgent']),
             'courier_notes' => $this->faker->optional()->sentence(),
             'scheduled_delivery_datetime' => $this->faker->optional()->dateTimeBetween('now', '+7 days'),
