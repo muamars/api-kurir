@@ -1263,10 +1263,22 @@ class ShipmentProgressController extends Controller
     private function validateMultiPackageWorkflow($shipment, $destination, $requestedStatus): array
     {
         // Get bulk assignment for this driver to maintain order
-        $bulkAssignment = DB::table('bulk_assignments')
-            ->where('driver_id', auth()->id())
-            ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipment->id)])
-            ->first();
+        $connection = DB::connection();
+        $driver = $connection->getDriverName();
+        
+        if ($driver === 'mysql') {
+            // MySQL syntax
+            $bulkAssignment = DB::table('bulk_assignments')
+                ->where('driver_id', auth()->id())
+                ->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($shipment->id)])
+                ->first();
+        } else {
+            // PostgreSQL syntax
+            $bulkAssignment = DB::table('bulk_assignments')
+                ->where('driver_id', auth()->id())
+                ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipment->id)])
+                ->first();
+        }
         
         // Debug logging
         \Log::info('Multi-Package Workflow Debug', [
@@ -1276,6 +1288,7 @@ class ShipmentProgressController extends Controller
             'requested_status' => $requestedStatus,
             'bulk_assignment_found' => $bulkAssignment ? true : false,
             'bulk_assignment_id' => $bulkAssignment ? $bulkAssignment->id : null,
+            'database_driver' => $driver,
         ]);
         
         if ($bulkAssignment) {
@@ -1435,10 +1448,22 @@ class ShipmentProgressController extends Controller
     {
         try {
             // Find bulk assignment containing this shipment for this driver
-            $bulkAssignment = DB::table('bulk_assignments')
-                ->where('driver_id', $driverId)
-                ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipmentId)])
-                ->first();
+            $connection = DB::connection();
+            $driver = $connection->getDriverName();
+            
+            if ($driver === 'mysql') {
+                // MySQL syntax
+                $bulkAssignment = DB::table('bulk_assignments')
+                    ->where('driver_id', $driverId)
+                    ->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($shipmentId)])
+                    ->first();
+            } else {
+                // PostgreSQL syntax
+                $bulkAssignment = DB::table('bulk_assignments')
+                    ->where('driver_id', $driverId)
+                    ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($shipmentId)])
+                    ->first();
+            }
 
             if ($bulkAssignment) {
                 $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
@@ -1488,10 +1513,22 @@ class ShipmentProgressController extends Controller
     {
         try {
             // Find bulk assignment containing this shipment
-            $bulkAssignment = DB::table('bulk_assignments')
-                ->where('driver_id', $driverId)
-                ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)])
-                ->first();
+            $connection = DB::connection();
+            $driver = $connection->getDriverName();
+            
+            if ($driver === 'mysql') {
+                // MySQL syntax
+                $bulkAssignment = DB::table('bulk_assignments')
+                    ->where('driver_id', $driverId)
+                    ->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($completedShipment->id)])
+                    ->first();
+            } else {
+                // PostgreSQL syntax
+                $bulkAssignment = DB::table('bulk_assignments')
+                    ->where('driver_id', $driverId)
+                    ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)])
+                    ->first();
+            }
 
             if (!$bulkAssignment) {
                 \Log::info('No bulk assignment found for completed shipment', [
