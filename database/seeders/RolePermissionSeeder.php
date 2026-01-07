@@ -65,6 +65,18 @@ class RolePermissionSeeder extends Seeder
             'upload-files',
             'download-files',
             'manage-files',
+
+            // Blog permissions
+            'view blogs',
+            'create blogs',
+            'edit blogs',
+            'delete blogs',
+
+            // Project permissions
+            'view projects',
+            'create projects',
+            'edit projects',
+            'delete projects',
         ];
 
         foreach ($permissions as $permission) {
@@ -108,6 +120,14 @@ class RolePermissionSeeder extends Seeder
             'upload-files',
             'download-files',
             'manage-files',
+            'view blogs',
+            'create blogs',
+            'edit blogs',
+            'delete blogs',
+            'view projects',
+            'create projects',
+            'edit projects',
+            'delete projects',
         ]);
 
         // Assign permissions to Kurir role (driver-specific)
@@ -120,6 +140,7 @@ class RolePermissionSeeder extends Seeder
             'view-notifications',
             'upload-files',
             'download-files',
+            'view blogs', // ✅ NEW: Kurir bisa melihat blog yang ditujukan untuk mereka
         ]);
 
         // Assign permissions to User role (basic user)
@@ -131,6 +152,9 @@ class RolePermissionSeeder extends Seeder
             'view-notifications',
             'upload-files',
             'download-files',
+            'view blogs',
+            'create blogs',
+            'view projects',
         ]);
 
         // Create default users (will be handled by CourierTrackingSeeder)

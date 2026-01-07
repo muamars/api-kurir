@@ -25,6 +25,8 @@ class UpdateBlogRequest extends FormRequest
             'title' => 'required|string|max:255',
             'content' => 'required|string',
             'is_published' => 'boolean',
+            'target_audience' => 'required|in:all,user,kurir',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
         ];
     }
 
@@ -37,6 +39,11 @@ class UpdateBlogRequest extends FormRequest
             'title.required' => 'Judul blog wajib diisi.',
             'title.max' => 'Judul blog maksimal 255 karakter.',
             'content.required' => 'Konten blog wajib diisi.',
+            'target_audience.required' => 'Target audience wajib dipilih.',
+            'target_audience.in' => 'Target audience harus salah satu dari: all, user, kurir.',
+            'image.image' => 'File harus berupa gambar.',
+            'image.mimes' => 'Format gambar harus jpeg, png, jpg, atau gif.',
+            'image.max' => 'Ukuran gambar maksimal 5MB.',
         ];
     }
 }

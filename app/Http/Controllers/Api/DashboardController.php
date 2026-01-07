@@ -10,20 +10,37 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Dashboard Controller - PRIVATE DASHBOARD SYSTEM
+ * 
+ * ✅ PERUBAHAN DARI UNIVERSAL KE PRIVATE:
+ * - Setiap user melihat data dashboard yang berbeda berdasarkan role mereka
+ * - Admin: Melihat semua data shipment di sistem
+ * - Kurir: Hanya melihat shipment yang assigned ke mereka
+ * - User: Hanya melihat shipment yang mereka buat sendiri
+ * 
+ * ✅ ENDPOINT YANG TERPENGARUH:
+ * - GET /api/v1/dashboard - Dashboard utama dengan statistik private
+ * - GET /api/v1/dashboard/chart - Chart data private berdasarkan role
+ * - GET /api/v1/dashboard/shipment-chart - Shipment chart private berdasarkan role
+ * 
+ * ✅ ENDPOINT YANG TETAP UNIVERSAL (ANTRIAN):
+ * - GET /api/v1/dashboard/shipments-table - Tetap menampilkan semua tiket untuk antrian
+ */
 class DashboardController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
 
-        // Base statistics
+        // ✅ PRIVATE DASHBOARD: Setiap user melihat data mereka sendiri
         $stats = [
-            'shipments' => $this->getShipmentStats($user),
-            'deliveries' => $this->getDeliveryStats($user),
-            'performance' => $this->getPerformanceStats($user),
+            'shipments' => $this->getPrivateShipmentStats($user),
+            'deliveries' => $this->getPrivateDeliveryStats($user),
+            'performance' => $this->getPrivatePerformanceStats($user),
         ];
 
-        // Role-specific data
+        // Role-specific data - tetap private untuk masing-masing user
         if ($user->hasRole('Admin')) {
             $stats['admin'] = $this->getAdminStats();
         } elseif ($user->hasRole('Kurir')) {
@@ -37,17 +54,18 @@ class DashboardController extends Controller
         ]);
     }
 
-    private function getShipmentStats($user): array
+    private function getPrivateShipmentStats($user): array
     {
-        $query = Shipment::query();
-
-        // Filter by user role
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Data berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua shipment
+            $query = Shipment::query();
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query = Shipment::where('assigned_driver_id', $user->id);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query = Shipment::where('created_by', $user->id);
         }
 
         return [
@@ -62,20 +80,22 @@ class DashboardController extends Controller
         ];
     }
 
-    private function getDeliveryStats($user): array
+    private function getPrivateDeliveryStats($user): array
     {
         $today = now()->startOfDay();
         $thisWeek = now()->startOfWeek();
         $thisMonth = now()->startOfMonth();
 
-        $query = Shipment::query();
-
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Data delivery berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua delivery
+            $query = Shipment::query();
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat delivery yang mereka handle
+            $query = Shipment::where('assigned_driver_id', $user->id);
+        } else {
+            // User biasa hanya melihat delivery shipment mereka
+            $query = Shipment::where('created_by', $user->id);
         }
 
         return [
@@ -88,18 +108,22 @@ class DashboardController extends Controller
         ];
     }
 
-    private function getPerformanceStats($user): array
+    private function getPrivatePerformanceStats($user): array
     {
         $thisMonth = now()->startOfMonth();
 
-        $query = Shipment::query()->where('updated_at', '>=', $thisMonth);
-
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Data performa berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat performa keseluruhan sistem
+            $query = Shipment::query()->where('updated_at', '>=', $thisMonth);
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir melihat performa mereka sendiri
+            $query = Shipment::where('assigned_driver_id', $user->id)
+                ->where('updated_at', '>=', $thisMonth);
+        } else {
+            // User biasa melihat performa shipment mereka
+            $query = Shipment::where('created_by', $user->id)
+                ->where('updated_at', '>=', $thisMonth);
         }
 
         $total = $query->count();
@@ -193,14 +217,18 @@ class DashboardController extends Controller
         $startDate = now()->startOfWeek();
         $endDate = now()->endOfWeek();
 
-        $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
-
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua data
+            $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query = Shipment::where('assigned_driver_id', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query = Shipment::where('created_by', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
         }
 
         $data = $query->selectRaw('DATE(created_at) as date, COUNT(*) as count')
@@ -228,14 +256,18 @@ class DashboardController extends Controller
         $startDate = now()->startOfMonth();
         $endDate = now()->endOfMonth();
 
-        $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
-
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua data
+            $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query = Shipment::where('assigned_driver_id', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query = Shipment::where('created_by', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
         }
 
         return $query->selectRaw('DATE(created_at) as date, COUNT(*) as count')
@@ -250,14 +282,18 @@ class DashboardController extends Controller
         $startDate = now()->startOfYear();
         $endDate = now()->endOfYear();
 
-        $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
-
-        if (! $user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua data
+            $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query = Shipment::where('assigned_driver_id', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query = Shipment::where('created_by', $user->id)
+                ->whereBetween('created_at', [$startDate, $endDate]);
         }
 
         return $query->selectRaw('MONTH(created_at) as month, COUNT(*) as count')
@@ -291,16 +327,18 @@ class DashboardController extends Controller
         $user = $request->user();
         $chartType = $request->chart_type;
 
-        // Base query
+        // ✅ PRIVATE DASHBOARD: Base query berbeda berdasarkan role user
         $query = Shipment::with(['category', 'vehicleType', 'creator.division']);
-
-        // Role-based filtering
-        if (!$user->hasRole('Admin')) {
-            if ($user->hasRole('Kurir')) {
-                $query->where('assigned_driver_id', $user->id);
-            } else {
-                $query->where('created_by', $user->id);
-            }
+        
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua data
+            // Query tetap tanpa filter
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query->where('assigned_driver_id', $user->id);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query->where('created_by', $user->id);
         }
 
         // Date filtering
@@ -359,6 +397,7 @@ class DashboardController extends Controller
                     'category_id' => $request->category_id,
                     'vehicle_type_id' => $request->vehicle_type_id,
                 ],
+                'user_scope' => $user->hasRole('Admin') ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
             ],
         ]);
     }
@@ -697,70 +736,239 @@ class DashboardController extends Controller
     }
 
     /**
-     * Get all shipments table with pagination for dashboard
+     * Get all shipments table with pagination for dashboard - ANTRIAN TIKET
+     * Endpoint ini bisa diakses oleh semua user untuk melihat antrian tiket
      */
     public function getShipmentsTable(Request $request): JsonResponse
     {
         try {
-            // Test basic functionality first
             $user = $request->user();
             
             if (!$user) {
                 return response()->json(['error' => 'User not authenticated'], 401);
             }
 
-            // Simple query without relationships first
-            $query = Shipment::query();
+            $request->validate([
+                'per_page' => 'nullable|integer|min:1|max:100',
+                'status' => 'nullable|in:pending,approved,assigned,in_progress,completed,cancelled,all',
+                'priority' => 'nullable|in:regular,urgent,all',
+                'search' => 'nullable|string|max:255',
+                'sort_by' => 'nullable|in:created_at,shipment_id,status,priority,deadline',
+                'sort_order' => 'nullable|in:asc,desc',
+                'show_completed' => 'nullable|boolean', // ✅ NEW: Parameter untuk tampilkan completed
+            ]);
 
-            // Role-based filtering
-            if (!$user->hasRole('Admin')) {
-                if ($user->hasRole('Kurir')) {
-                    $query->where('assigned_driver_id', $user->id);
-                } else {
-                    $query->where('created_by', $user->id);
-                }
+            // ✅ ANTRIAN TIKET: Tampilkan SEMUA tiket untuk semua user
+            // Tidak ada role-based filtering - semua user bisa lihat semua tiket
+            $query = Shipment::with([
+                'creator:id,name,email',
+                'driver:id,name,email',
+                'category:id,name',
+                'vehicleType:id,name',
+                'destinations:id,shipment_id,delivery_address,receiver_name,status'
+            ]);
+
+            // ✅ AUTO-HIDE COMPLETED: Secara default sembunyikan tiket completed
+            if (!$request->get('show_completed', false)) {
+                $query->where('status', '!=', 'completed');
             }
 
-            // Get simple paginated results
-            $shipments = $query->paginate(10);
+            // Filter berdasarkan status jika diminta
+            if ($request->filled('status') && $request->status !== 'all') {
+                $query->where('status', $request->status);
+            }
 
-            // Simple data transformation
+            // Filter berdasarkan priority jika diminta
+            if ($request->filled('priority') && $request->priority !== 'all') {
+                $query->where('priority', $request->priority);
+            }
+
+            // Search functionality
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('shipment_id', 'LIKE', "%{$search}%")
+                        ->orWhere('notes', 'LIKE', "%{$search}%")
+                        ->orWhereHas('creator', function ($creatorQuery) use ($search) {
+                            $creatorQuery->where('name', 'LIKE', "%{$search}%")
+                                ->orWhere('email', 'LIKE', "%{$search}%");
+                        })
+                        ->orWhereHas('destinations', function ($destQuery) use ($search) {
+                            $destQuery->where('receiver_name', 'LIKE', "%{$search}%")
+                                ->orWhere('delivery_address', 'LIKE', "%{$search}%");
+                        });
+                });
+            }
+
+            // Sorting
+            $sortBy = $request->get('sort_by', 'created_at');
+            $sortOrder = $request->get('sort_order', 'desc');
+            
+            if ($sortBy === 'priority') {
+                // Sort urgent first, then regular
+                $query->orderByRaw("CASE WHEN priority = 'urgent' THEN 0 ELSE 1 END " . $sortOrder);
+            } else {
+                $query->orderBy($sortBy, $sortOrder);
+            }
+
+            // Default secondary sort by created_at desc
+            if ($sortBy !== 'created_at') {
+                $query->orderBy('created_at', 'desc');
+            }
+
+            // Pagination
+            $perPage = $request->get('per_page', 10);
+            $shipments = $query->paginate($perPage);
+
+            // Transform data untuk antrian tiket
             $tableData = $shipments->getCollection()->map(function ($shipment) {
                 return [
                     'id' => $shipment->id,
-                    'shipment_id' => $shipment->shipment_id ?? 'N/A',
-                    'status' => $shipment->status ?? 'unknown',
-                    'priority' => $shipment->priority ?? 'regular',
-                    'pickup_address' => $shipment->pickup_address ?? 'N/A',
-                    'created_at' => $shipment->created_at ? $shipment->created_at->format('Y-m-d H:i:s') : 'N/A',
+                    'shipment_id' => $shipment->shipment_id,
+                    'status' => $shipment->status,
+                    'status_label' => $this->getStatusLabel($shipment->status),
+                    'status_color' => $this->getStatusColor($shipment->status),
+                    'priority' => $shipment->priority,
+                    'priority_label' => ucfirst($shipment->priority),
+                    'priority_color' => $shipment->priority === 'urgent' ? 'red' : 'blue',
+                    'notes' => $shipment->notes,
+                    'deadline' => $shipment->deadline ? $shipment->deadline->format('Y-m-d H:i') : null,
+                    'deadline_formatted' => $shipment->deadline ? $shipment->deadline->format('d M Y, H:i') : null,
+                    'is_overdue' => $shipment->deadline && $shipment->deadline < now() && $shipment->status !== 'completed',
+                    'created_at' => $shipment->created_at->format('Y-m-d H:i:s'),
+                    'created_at_formatted' => $shipment->created_at->format('d M Y, H:i'),
+                    'created_at_human' => $shipment->created_at->diffForHumans(),
+                    
+                    // Creator info
+                    'creator' => $shipment->creator ? [
+                        'id' => $shipment->creator->id,
+                        'name' => $shipment->creator->name,
+                        'email' => $shipment->creator->email,
+                    ] : null,
+                    
+                    // Driver info
+                    'driver' => $shipment->driver ? [
+                        'id' => $shipment->driver->id,
+                        'name' => $shipment->driver->name,
+                        'email' => $shipment->driver->email,
+                    ] : null,
+                    
+                    // Category info
+                    'category' => $shipment->category ? [
+                        'id' => $shipment->category->id,
+                        'name' => $shipment->category->name,
+                    ] : null,
+                    
+                    // Vehicle type info
+                    'vehicle_type' => $shipment->vehicleType ? [
+                        'id' => $shipment->vehicleType->id,
+                        'name' => $shipment->vehicleType->name,
+                    ] : null,
+                    
+                    // Destinations summary
+                    'destinations_count' => $shipment->destinations->count(),
+                    'destinations_summary' => $shipment->destinations->map(function ($dest) {
+                        return [
+                            'id' => $dest->id,
+                            'delivery_address' => $dest->delivery_address,
+                            'receiver_name' => $dest->receiver_name,
+                            'status' => $dest->status,
+                            'status_label' => $this->getDestinationStatusLabel($dest->status),
+                        ];
+                    })->take(3), // Hanya tampilkan 3 destination pertama untuk ringkasan
+                    
+                    // Quick actions available
+                    'can_edit' => true, // Semua user bisa lihat, tapi edit tergantung role
+                    'can_assign' => $shipment->status === 'pending',
+                    'can_cancel' => in_array($shipment->status, ['pending', 'assigned']),
                 ];
             });
 
+            // Summary statistics untuk antrian (exclude completed by default)
+            $showCompleted = $request->get('show_completed', false);
+            $summaryQuery = Shipment::query();
+            if (!$showCompleted) {
+                $summaryQuery->where('status', '!=', 'completed');
+            }
+            
+            $summary = [
+                'total_shipments' => $shipments->total(),
+                'total_in_system' => Shipment::count(), // Total semua tiket di sistem
+                'status_counts' => [
+                    'pending' => $summaryQuery->clone()->where('status', 'pending')->count(),
+                    'assigned' => $summaryQuery->clone()->where('status', 'assigned')->count(),
+                    'in_progress' => $summaryQuery->clone()->where('status', 'in_progress')->count(),
+                    'completed' => Shipment::where('status', 'completed')->count(), // Selalu tampilkan jumlah completed
+                    'cancelled' => $summaryQuery->clone()->where('status', 'cancelled')->count(),
+                ],
+                'priority_counts' => [
+                    'urgent' => $summaryQuery->clone()->where('priority', 'urgent')->count(),
+                    'regular' => $summaryQuery->clone()->where('priority', 'regular')->count(),
+                ],
+                'overdue_count' => $summaryQuery->clone()
+                    ->where('deadline', '<', now())
+                    ->whereNotIn('status', ['completed', 'cancelled'])
+                    ->count(),
+                'completed_hidden' => !$showCompleted,
+                'completed_count' => Shipment::where('status', 'completed')->count(),
+            ];
+
             return response()->json([
-                'message' => 'Shipments table data retrieved successfully',
+                'message' => 'Antrian tiket berhasil diambil',
                 'data' => $tableData,
+                'summary' => $summary,
                 'pagination' => [
                     'current_page' => $shipments->currentPage(),
                     'per_page' => $shipments->perPage(),
                     'total' => $shipments->total(),
                     'last_page' => $shipments->lastPage(),
+                    'from' => $shipments->firstItem(),
+                    'to' => $shipments->lastItem(),
+                    'has_more_pages' => $shipments->hasMorePages(),
                 ],
-                'debug' => [
+                'filters' => [
+                    'status' => $request->status ?? 'all',
+                    'priority' => $request->priority ?? 'all',
+                    'search' => $request->search ?? '',
+                    'sort_by' => $sortBy,
+                    'sort_order' => $sortOrder,
+                ],
+                'user_info' => [
                     'user_id' => $user->id,
+                    'user_name' => $user->name,
                     'user_roles' => $user->getRoleNames(),
-                    'query_count' => $shipments->total(),
-                ]
+                    'can_see_all_tickets' => true, // Semua user bisa lihat semua tiket
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Failed to retrieve shipments table data',
+                'message' => 'Gagal mengambil data antrian tiket',
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => config('app.debug') ? $e->getTraceAsString() : 'Enable debug mode for trace',
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ], 500);
         }
+    }
+
+    /**
+     * Get destination status label in Indonesian
+     */
+    private function getDestinationStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Menunggu Pickup',
+            'picked' => 'Sudah Dipickup',
+            'in_progress' => 'Dalam Perjalanan',
+            'arrived' => 'Sampai di Lokasi',
+            'delivered' => 'Sudah Diterima',
+            'returning' => 'Perjalanan Pulang',
+            'finished' => 'Sampai di Kantor',
+            'takeover' => 'Takeover',
+            'failed' => 'Gagal',
+            default => ucfirst($status),
+        };
     }
 
     /**
