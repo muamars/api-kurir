@@ -183,6 +183,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);
             Route::put('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'update']);
             Route::delete('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'destroy']);
+
+            // Division Management (Admin only for create/update/delete)
+            Route::get('/divisions/{division}', [DivisionController::class, 'show']);
+            Route::post('/divisions', [DivisionController::class, 'store']);
+            Route::put('/divisions/{division}', [DivisionController::class, 'update']);
+            Route::delete('/divisions/{division}', [DivisionController::class, 'destroy']);
         });
     });
 });
