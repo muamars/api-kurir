@@ -78,22 +78,19 @@ class ShipmentController extends Controller
             $query->where('created_by', $request->created_by);
         }
 
-        // ✅ ANTRIAN TIKET: Semua user bisa lihat semua tiket (sama seperti dashboard)
-        // Tidak ada role-based filtering - untuk fungsi antrian universal
+        // ✅ ROLE-BASED FILTERING: User hanya bisa lihat shipment mereka sendiri
         $user = $request->user();
         
-        // Optional: Jika ingin tetap ada mode "my shipments", bisa pakai parameter
-        if ($request->get('view_mode') === 'my_only') {
-            // Mode "hanya tiket saya" - opsional
-            if (! $user->hasRole('Admin')) {
-                if ($user->hasRole('Kurir')) {
-                    $query->where('assigned_driver_id', $user->id);
-                } else {
-                    $query->where('created_by', $user->id);
-                }
+        // Admin bisa lihat semua shipment
+        if (! $user->hasRole('Admin')) {
+            if ($user->hasRole('Kurir')) {
+                // Kurir hanya bisa lihat shipment yang ditugaskan ke mereka
+                $query->where('assigned_driver_id', $user->id);
+            } else {
+                // User biasa hanya bisa lihat shipment yang mereka buat
+                $query->where('created_by', $user->id);
             }
         }
-        // Default: tampilkan semua tiket untuk semua user
 
         // Sorting
         $sortBy = $request->get('sort_by', 'created_at');
