@@ -749,7 +749,7 @@ class DashboardController extends Controller
             }
 
             $request->validate([
-                'per_page' => 'nullable|integer|min:1|max:100',
+                'per_page' => 'nullable|integer|min:1|max:500',
                 'status' => 'nullable|in:pending,approved,assigned,in_progress,completed,cancelled,all',
                 'priority' => 'nullable|in:regular,urgent,all',
                 'search' => 'nullable|string|max:255',
@@ -817,7 +817,7 @@ class DashboardController extends Controller
             }
 
             // Pagination
-            $perPage = $request->get('per_page', 10);
+            $perPage = $request->get('per_page', 500);
             $shipments = $query->paginate($perPage);
 
             // Transform data untuk antrian tiket

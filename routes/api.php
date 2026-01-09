@@ -139,6 +139,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Customer Management (all authenticated users can view)
         Route::get('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'index']);
+        Route::get('/customers/search', [\App\Http\Controllers\Api\CustomerController::class, 'search']);
         Route::get('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'show']);
 
         // Kurir self-service status toggle

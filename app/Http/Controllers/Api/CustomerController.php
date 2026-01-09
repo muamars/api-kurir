@@ -79,4 +79,81 @@ class CustomerController extends Controller
             'message' => 'Customer berhasil dihapus',
         ]);
     }
+
+    /**
+     * Search customers with comprehensive filtering
+     */
+    public function search(Request $request)
+    {
+        $query = Customer::query();
+
+        // Search across multiple fields
+        if ($request->has('q') && !empty($request->q)) {
+            $search = $request->q;
+            $query->where(function ($q) use ($search) {
+                $q->where('company_name', 'LIKE', "%{$search}%")
+                    ->orWhere('customer_name', 'LIKE', "%{$search}%")
+                    ->orWhere('phone', 'LIKE', "%{$search}%")
+                    ->orWhere('email', 'LIKE', "%{$search}%")
+                    ->orWhere('address', 'LIKE', "%{$search}%");
+            });
+        }
+
+        // Filter by specific fields
+        if ($request->has('company_name')) {
+            $query->where('company_name', 'LIKE', "%{$request->company_name}%");
+        }
+
+        if ($request->has('customer_name')) {
+            $query->where('customer_name', 'LIKE', "%{$request->customer_name}%");
+        }
+
+        if ($request->has('phone')) {
+            $query->where('phone', 'LIKE', "%{$request->phone}%");
+        }
+
+        if ($request->has('email')) {
+            $query->where('email', 'LIKE', "%{$request->email}%");
+        }
+
+        if ($request->has('address')) {
+            $query->where('address', 'LIKE', "%{$request->address}%");
+        }
+
+        // Filter by active status
+        if ($request->has('is_active')) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
+        // Sorting options
+        $sortBy = $request->get('sort_by', 'company_name');
+        $sortOrder = $request->get('sort_order', 'asc');
+        
+        $allowedSortFields = ['company_name', 'customer_name', 'phone', 'email', 'created_at', 'updated_at'];
+        if (in_array($sortBy, $allowedSortFields)) {
+            $query->orderBy($sortBy, $sortOrder);
+        } else {
+            $query->orderBy('company_name', 'asc');
+        }
+
+        // Get all results without pagination
+        $customers = $query->get();
+
+        return response()->json([
+            'message' => 'Data customer berhasil ditemukan',
+            'data' => $customers,
+            'total' => $customers->count(),
+            'search_params' => [
+                'q' => $request->q,
+                'company_name' => $request->company_name,
+                'customer_name' => $request->customer_name,
+                'phone' => $request->phone,
+                'email' => $request->email,
+                'address' => $request->address,
+                'is_active' => $request->is_active,
+                'sort_by' => $sortBy,
+                'sort_order' => $sortOrder,
+            ]
+        ]);
+    }
 }
