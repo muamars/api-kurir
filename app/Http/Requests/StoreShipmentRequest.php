@@ -52,6 +52,7 @@ class StoreShipmentRequest extends FormRequest
             'destinations.*.shipment_note' => 'nullable|string',
 
             'items' => 'required|array|min:1',
+            'items.*.no_referensi' => 'required|string|max:255',
             'items.*.item_name' => 'required|string|max:255',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.description' => 'nullable|string',
@@ -69,6 +70,7 @@ class StoreShipmentRequest extends FormRequest
             'destinations.*.receiver_contact.required' => 'Receiver contact is required for each destination',
             'destinations.*.delivery_address.required' => 'Delivery address is required for each destination',
             'items.required' => 'At least one item is required',
+            'items.*.no_referensi.required' => 'Reference number is required for each item',
             'items.*.item_name.required' => 'Item name is required',
             'items.*.quantity.required' => 'Item quantity is required',
             'items.*.quantity.min' => 'Item quantity must be at least 1',

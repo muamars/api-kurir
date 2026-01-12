@@ -986,4 +986,337 @@ class DashboardController extends Controller
             default => 'gray',
         };
     }
+
+    /**
+     * Get shipping service analysis report (Online vs Internal Courier)
+     * Endpoint untuk analisa pengiriman berdasarkan jenis layanan
+     */
+    public function getShippingServiceReport(Request $request): JsonResponse
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+            'period' => 'nullable|in:today,week,month,quarter,year,custom',
+            'group_by' => 'nullable|in:day,week,month,year',
+        ]);
+
+        $user = $request->user();
+
+        // Base query berdasarkan role user
+        $query = Shipment::query()->where('status', 'completed');
+        
+        if ($user->hasRole('Admin')) {
+            // Admin melihat semua data
+        } elseif ($user->hasRole('Kurir')) {
+            // Kurir hanya melihat shipment yang assigned ke mereka
+            $query->where('assigned_driver_id', $user->id);
+        } else {
+            // User biasa hanya melihat shipment yang mereka buat
+            $query->where('created_by', $user->id);
+        }
+
+        // Apply date filter
+        $this->applyDateFilterForReport($query, $request);
+
+        // Get data dengan informasi kendaraan dan biaya
+        $shipments = $query->select([
+            'id', 'shipment_id', 'vehicle_used', 'shipping_cost', 
+            'assigned_driver_id', 'completed_at', 'created_at'
+        ])
+        ->with(['driver:id,name'])
+        ->get();
+
+        // Kategorisasi berdasarkan jenis layanan
+        $onlineServices = $this->categorizeOnlineServices($shipments);
+        $internalServices = $this->categorizeInternalServices($shipments);
+
+        // Hitung statistik
+        $totalShipments = $shipments->count();
+        $totalOnline = $onlineServices->count();
+        $totalInternal = $internalServices->count();
+        
+        $totalCostOnline = $onlineServices->sum('shipping_cost') ?? 0;
+        $totalCostInternal = $internalServices->sum('shipping_cost') ?? 0;
+        $totalCost = $totalCostOnline + $totalCostInternal;
+
+        // Breakdown berdasarkan periode jika diminta
+        $timeBreakdown = [];
+        if ($request->group_by) {
+            $timeBreakdown = $this->getTimeBreakdownForServices($shipments, $request->group_by);
+        }
+
+        // Top vehicles analysis
+        $vehicleAnalysis = $this->getVehicleAnalysis($shipments);
+
+        return response()->json([
+            'data' => [
+                'summary' => [
+                    'total_shipments' => $totalShipments,
+                    'total_cost' => $totalCost,
+                    'average_cost_per_shipment' => $totalShipments > 0 ? round($totalCost / $totalShipments, 2) : 0,
+                ],
+                'service_comparison' => [
+                    'online_courier' => [
+                        'count' => $totalOnline,
+                        'percentage' => $totalShipments > 0 ? round(($totalOnline / $totalShipments) * 100, 2) : 0,
+                        'total_cost' => $totalCostOnline,
+                        'average_cost' => $totalOnline > 0 ? round($totalCostOnline / $totalOnline, 2) : 0,
+                        'cost_percentage' => $totalCost > 0 ? round(($totalCostOnline / $totalCost) * 100, 2) : 0,
+                    ],
+                    'internal_courier' => [
+                        'count' => $totalInternal,
+                        'percentage' => $totalShipments > 0 ? round(($totalInternal / $totalShipments) * 100, 2) : 0,
+                        'total_cost' => $totalCostInternal,
+                        'average_cost' => $totalInternal > 0 ? round($totalCostInternal / $totalInternal, 2) : 0,
+                        'cost_percentage' => $totalCost > 0 ? round(($totalCostInternal / $totalCost) * 100, 2) : 0,
+                    ],
+                ],
+                'vehicle_analysis' => $vehicleAnalysis,
+                'time_breakdown' => $timeBreakdown,
+                'detailed_breakdown' => [
+                    'online_services' => $this->getDetailedServiceBreakdown($onlineServices),
+                    'internal_services' => $this->getDetailedServiceBreakdown($internalServices),
+                ],
+            ],
+            'meta' => [
+                'period' => $request->period ?? 'custom',
+                'date_range' => [
+                    'from' => $request->date_from ?? 'All time',
+                    'to' => $request->date_to ?? 'All time',
+                ],
+                'group_by' => $request->group_by,
+                'user_scope' => $user->hasRole('Admin') ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
+                'generated_at' => now()->format('Y-m-d H:i:s'),
+            ],
+        ]);
+    }
+
+    private function applyDateFilterForReport($query, $request): void
+    {
+        if ($request->date_from && $request->date_to) {
+            $query->whereBetween('completed_at', [$request->date_from, $request->date_to]);
+        } elseif ($request->period) {
+            switch ($request->period) {
+                case 'today':
+                    $query->whereDate('completed_at', now()->format('Y-m-d'));
+                    break;
+                case 'week':
+                    $query->whereBetween('completed_at', [now()->startOfWeek(), now()->endOfWeek()]);
+                    break;
+                case 'month':
+                    $query->whereBetween('completed_at', [now()->startOfMonth(), now()->endOfMonth()]);
+                    break;
+                case 'quarter':
+                    $query->whereBetween('completed_at', [now()->startOfQuarter(), now()->endOfQuarter()]);
+                    break;
+                case 'year':
+                    $query->whereBetween('completed_at', [now()->startOfYear(), now()->endOfYear()]);
+                    break;
+            }
+        }
+    }
+
+    private function categorizeOnlineServices($shipments)
+    {
+        // Keywords untuk mengidentifikasi layanan kurir online
+        $onlineKeywords = [
+            'gojek', 'grab', 'jne', 'tiki', 'pos', 'sicepat', 'j&t', 'anteraja', 
+            'ninja', 'lion', 'wahana', 'dakota', 'rpx', 'ide', 'pcp', 'jet',
+            'online', 'ojol', 'ojek', 'motor online', 'kurir online'
+        ];
+
+        return $shipments->filter(function ($shipment) use ($onlineKeywords) {
+            if (!$shipment->vehicle_used) return false;
+            
+            $vehicleUsed = strtolower($shipment->vehicle_used);
+            
+            foreach ($onlineKeywords as $keyword) {
+                if (str_contains($vehicleUsed, $keyword)) {
+                    return true;
+                }
+            }
+            
+            return false;
+        });
+    }
+
+    private function categorizeInternalServices($shipments)
+    {
+        // Keywords untuk mengidentifikasi kurir internal
+        $internalKeywords = [
+            'internal', 'karyawan', 'staff', 'pegawai', 'driver', 'kurir',
+            'mobil', 'motor', 'pickup', 'truck', 'van', 'avanza', 'xenia',
+            'hilux', 'carry', 'granmax', 'daihatsu', 'toyota', 'suzuki',
+            'honda', 'yamaha', 'kawasaki'
+        ];
+
+        return $shipments->filter(function ($shipment) use ($internalKeywords) {
+            // Jika ada assigned_driver_id, kemungkinan besar internal
+            if ($shipment->assigned_driver_id) {
+                return true;
+            }
+            
+            if (!$shipment->vehicle_used) return false;
+            
+            $vehicleUsed = strtolower($shipment->vehicle_used);
+            
+            // Cek apakah bukan online service dulu
+            $onlineKeywords = [
+                'gojek', 'grab', 'jne', 'tiki', 'pos', 'sicepat', 'j&t', 'anteraja', 
+                'ninja', 'lion', 'wahana', 'dakota', 'rpx', 'ide', 'pcp', 'jet',
+                'online', 'ojol', 'ojek'
+            ];
+            
+            foreach ($onlineKeywords as $keyword) {
+                if (str_contains($vehicleUsed, $keyword)) {
+                    return false; // Ini online service
+                }
+            }
+            
+            // Jika bukan online service, anggap internal
+            return true;
+        });
+    }
+
+    private function getTimeBreakdownForServices($shipments, $groupBy)
+    {
+        $onlineServices = $this->categorizeOnlineServices($shipments);
+        $internalServices = $this->categorizeInternalServices($shipments);
+
+        $breakdown = [];
+
+        switch ($groupBy) {
+            case 'day':
+                $format = 'Y-m-d';
+                $labelFormat = 'd M Y';
+                break;
+            case 'week':
+                $format = 'Y-W';
+                $labelFormat = 'W, Y';
+                break;
+            case 'month':
+                $format = 'Y-m';
+                $labelFormat = 'M Y';
+                break;
+            case 'year':
+                $format = 'Y';
+                $labelFormat = 'Y';
+                break;
+            default:
+                $format = 'Y-m-d';
+                $labelFormat = 'd M Y';
+        }
+
+        // Group online services
+        $onlineGrouped = $onlineServices->groupBy(function ($item) use ($format) {
+            return Carbon::parse($item->completed_at)->format($format);
+        });
+
+        // Group internal services
+        $internalGrouped = $internalServices->groupBy(function ($item) use ($format) {
+            return Carbon::parse($item->completed_at)->format($format);
+        });
+
+        // Combine periods
+        $allPeriods = collect($onlineGrouped->keys())
+            ->merge($internalGrouped->keys())
+            ->unique()
+            ->sort();
+
+        foreach ($allPeriods as $period) {
+            $onlineCount = $onlineGrouped->get($period, collect())->count();
+            $internalCount = $internalGrouped->get($period, collect())->count();
+            $onlineCost = $onlineGrouped->get($period, collect())->sum('shipping_cost') ?? 0;
+            $internalCost = $internalGrouped->get($period, collect())->sum('shipping_cost') ?? 0;
+
+            $breakdown[] = [
+                'period' => $period,
+                'period_label' => Carbon::createFromFormat($format, $period)->format($labelFormat),
+                'online_courier' => [
+                    'count' => $onlineCount,
+                    'cost' => $onlineCost,
+                ],
+                'internal_courier' => [
+                    'count' => $internalCount,
+                    'cost' => $internalCost,
+                ],
+                'total' => [
+                    'count' => $onlineCount + $internalCount,
+                    'cost' => $onlineCost + $internalCost,
+                ],
+            ];
+        }
+
+        return $breakdown;
+    }
+
+    private function getVehicleAnalysis($shipments)
+    {
+        $vehicleStats = $shipments->groupBy('vehicle_used')
+            ->map(function ($group, $vehicle) {
+                $count = $group->count();
+                $totalCost = $group->sum('shipping_cost') ?? 0;
+                
+                return [
+                    'vehicle' => $vehicle ?: 'Not Specified',
+                    'count' => $count,
+                    'total_cost' => $totalCost,
+                    'average_cost' => $count > 0 ? round($totalCost / $count, 2) : 0,
+                    'service_type' => $this->determineServiceType($vehicle),
+                ];
+            })
+            ->sortByDesc('count')
+            ->values()
+            ->take(20); // Top 20 vehicles
+
+        return $vehicleStats->toArray();
+    }
+
+    private function determineServiceType($vehicle)
+    {
+        if (!$vehicle) return 'Unknown';
+        
+        $vehicleLower = strtolower($vehicle);
+        
+        $onlineKeywords = [
+            'gojek', 'grab', 'jne', 'tiki', 'pos', 'sicepat', 'j&t', 'anteraja', 
+            'ninja', 'lion', 'wahana', 'dakota', 'rpx', 'ide', 'pcp', 'jet',
+            'online', 'ojol', 'ojek'
+        ];
+        
+        foreach ($onlineKeywords as $keyword) {
+            if (str_contains($vehicleLower, $keyword)) {
+                return 'Online Courier';
+            }
+        }
+        
+        return 'Internal Courier';
+    }
+
+    private function getDetailedServiceBreakdown($services)
+    {
+        return $services->groupBy('vehicle_used')
+            ->map(function ($group, $vehicle) {
+                $count = $group->count();
+                $totalCost = $group->sum('shipping_cost') ?? 0;
+                
+                return [
+                    'vehicle' => $vehicle ?: 'Not Specified',
+                    'count' => $count,
+                    'total_cost' => $totalCost,
+                    'average_cost' => $count > 0 ? round($totalCost / $count, 2) : 0,
+                    'shipments' => $group->map(function ($shipment) {
+                        return [
+                            'shipment_id' => $shipment->shipment_id,
+                            'cost' => $shipment->shipping_cost ?? 0,
+                            'driver' => $shipment->driver?->name ?? 'No Driver',
+                            'completed_at' => $shipment->completed_at?->format('Y-m-d H:i:s'),
+                        ];
+                    })->toArray(),
+                ];
+            })
+            ->sortByDesc('count')
+            ->values()
+            ->toArray();
+    }
 }

@@ -38,12 +38,19 @@ class Shipment extends Model
         'surat_pengantar_kerja',
         'cancelled_by',
         'cancelled_at',
+        'shipping_cost',
+        'vehicle_used',
+        'completion_photo',
+        'completed_at',
+        'completed_by',
     ];
 
     protected $casts = [
         'approved_at' => 'datetime',
         'deadline' => 'datetime',
         'scheduled_delivery_datetime' => 'datetime',
+        'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     /**
@@ -121,5 +128,10 @@ class Shipment extends Model
     public function cancelledBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
+    public function completedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'completed_by');
     }
 }

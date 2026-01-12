@@ -78,6 +78,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         
         // Bulk assignment routes (harus sebelum {shipment} routes)
         Route::post('/shipments/bulk-assign-driver', [ShipmentController::class, 'bulkAssignDriver']);
+        Route::post('/shipments/complete-shipments', [ShipmentController::class, 'completeShipments']);
         Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}/route-duration', [ShipmentProgressController::class, 'getAdminBulkAssignmentRouteDuration']);
@@ -113,6 +114,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/dashboard/chart', [DashboardController::class, 'getChartData']);
         Route::get('/dashboard/shipment-chart', [DashboardController::class, 'getShipmentChartData']);
+        Route::get('/dashboard/shipping-service-report', [DashboardController::class, 'getShippingServiceReport']);
         Route::get('/dashboard/shipments-table', [DashboardController::class, 'getShipmentsTable']);
         Route::get('/dashboard/test', function() {
             return response()->json(['message' => 'Test endpoint works', 'time' => now()]);
@@ -154,6 +156,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'index']);
         Route::get('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'show']);
 
+        // Vehicle Types Management (Admin only)
+        Route::middleware('role:Admin')->group(function () {
+            Route::post('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'store']);
+            Route::put('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'update']);
+        });
+        
+        // DELETE route outside group to avoid conflicts
+        Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy'])->middleware('role:Admin');
+
         // Role & Permission Management Routes (Admin only)
         Route::middleware('role:Admin')->group(function () {
             // User Management
@@ -174,11 +185,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'store']);
             Route::put('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'update']);
             Route::delete('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'destroy']);
-
-            // Vehicle Types Management (Admin only)
-            Route::post('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'store']);
-            Route::put('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'update']);
-            Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy']);
 
             // Customer Management (Admin only for create/update/delete)
             Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);

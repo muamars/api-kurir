@@ -216,6 +216,39 @@ class NotificationService
         }
     }
 
+    public function shipmentCompleted(Shipment $shipment): void
+    {
+        // Notify creator about completion
+        Notification::create([
+            'user_id' => $shipment->created_by,
+            'type' => 'shipment_completed',
+            'title' => 'Shipment Completed',
+            'message' => "Shipment {$shipment->shipment_id} has been completed by admin",
+            'data' => [
+                'shipment_id' => $shipment->id,
+                'shipment_number' => $shipment->shipment_id,
+                'shipping_cost' => $shipment->shipping_cost,
+                'vehicle_used' => $shipment->vehicle_used,
+                'completed_at' => $shipment->completed_at?->format('Y-m-d H:i:s'),
+            ],
+        ]);
+
+        // Notify driver if assigned
+        if ($shipment->driver) {
+            Notification::create([
+                'user_id' => $shipment->assigned_driver_id,
+                'type' => 'shipment_completed_driver',
+                'title' => 'Shipment Completed',
+                'message' => "Shipment {$shipment->shipment_id} has been marked as completed",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'completed_at' => $shipment->completed_at?->format('Y-m-d H:i:s'),
+                ],
+            ]);
+        }
+    }
+
     public function shipmentTakeover(Shipment $shipment, string $reason): void
     {
         // Notify creator about takeover

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\CompleteShipmentRequest;
 use App\Http\Requests\StoreShipmentRequest;
 use App\Http\Requests\UpdateShipmentRequest;
 use App\Http\Resources\ShipmentResource;
@@ -164,6 +165,7 @@ class ShipmentController extends Controller
             // Create items
             foreach ($request->items as $item) {
                 $shipment->items()->create([
+                    'no_referensi' => $item['no_referensi'],
                     'item_name' => $item['item_name'],
                     'quantity' => $item['quantity'],
                     'description' => $item['description'] ?? null,
@@ -857,6 +859,82 @@ class ShipmentController extends Controller
                 'summary' => $comprehensiveSummary,
             ],
         ]);
+    }
+
+    /**
+     * Complete shipments with shipping cost and vehicle info (Admin only)
+     */
+    public function completeShipments(\App\Http\Requests\CompleteShipmentRequest $request): JsonResponse
+    {
+        try {
+            DB::beginTransaction();
+
+            // Get shipments that can be completed
+            $shipments = Shipment::whereIn('id', $request->shipment_ids)
+                ->whereIn('status', ['pending', 'assigned', 'in_progress'])
+                ->get();
+
+            if ($shipments->count() !== count($request->shipment_ids)) {
+                return response()->json([
+                    'message' => 'Some shipments cannot be completed (invalid status or not found)',
+                ], 400);
+            }
+
+            $completionPhotoPath = null;
+
+            // Handle photo upload if provided
+            if ($request->hasFile('completion_photo')) {
+                $photo = $request->file('completion_photo');
+                $filename = 'completion_' . time() . '_' . Str::random(10) . '.' . $photo->getClientOriginalExtension();
+                $completionPhotoPath = $photo->storeAs('completion_photos', $filename, 'public');
+            }
+
+            $completedCount = 0;
+            $completedShipments = [];
+
+            foreach ($shipments as $shipment) {
+                // Update shipment with completion data
+                $shipment->update([
+                    'status' => 'completed',
+                    'shipping_cost' => $request->shipping_cost,
+                    'vehicle_used' => $request->vehicle_used,
+                    'completion_photo' => $completionPhotoPath,
+                    'completed_at' => now(),
+                    'completed_by' => auth()->id(),
+                ]);
+
+                // Update all destinations to finished
+                $shipment->destinations()->update([
+                    'status' => 'finished'
+                ]);
+
+                // Send notification
+                app(NotificationService::class)->shipmentCompleted($shipment->fresh(['creator', 'driver']));
+                
+                $completedCount++;
+                $completedShipments[] = $shipment->fresh(['creator', 'driver', 'destinations', 'items']);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "{$completedCount} shipments completed successfully",
+                'completed_count' => $completedCount,
+                'shipping_cost' => $request->shipping_cost,
+                'vehicle_used' => $request->vehicle_used,
+                'completion_photo' => $completionPhotoPath,
+                'completed_at' => now()->format('Y-m-d H:i:s'),
+                'shipments' => \App\Http\Resources\ShipmentResource::collection($completedShipments),
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Failed to complete shipments',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     // Helper methods

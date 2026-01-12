@@ -74,6 +74,7 @@ class ShipmentResource extends JsonResource
             'items' => $this->items->map(function ($item) {
                 return [
                     'id' => $item->id,
+                    'no_referensi' => $item->no_referensi,
                     'item_name' => $item->item_name,
                     'quantity' => $item->quantity,
                     'description' => $item->description,
