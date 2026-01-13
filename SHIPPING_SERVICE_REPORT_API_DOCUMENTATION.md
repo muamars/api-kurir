@@ -4,7 +4,11 @@
 
 **URL:** `GET /api/v1/dashboard/shipping-service-report`
 
-**Description:** Endpoint untuk analisa pengiriman berdasarkan jenis layanan (kurir online vs kurir internal) dengan breakdown biaya, kendaraan, dan periode waktu.
+**Description:** Endpoint untuk analisa pengiriman berdasarkan jenis layanan (kurir online vs kurir internal). 
+
+**✅ LOGIKA BARU:**
+- **Internal Courier**: Shipment yang di-assign via `bulk-assign-driver` endpoint (memiliki `assigned_driver_id`)
+- **Online Courier**: Shipment yang di-complete via `complete-shipments` endpoint (memiliki `vehicle_used` & `shipping_cost`)
 
 ### Authentication
 - **Required:** Yes
@@ -189,19 +193,31 @@ GET /api/v1/dashboard/shipping-service-report?period=year&group_by=month
 
 ## Business Logic
 
-### Kategorisasi Layanan
-
-#### **Online Courier Keywords:**
-- Ekspedisi: `jne`, `tiki`, `pos`, `sicepat`, `j&t`, `anteraja`, `ninja`, `lion`, `wahana`, `dakota`, `rpx`, `ide`, `pcp`, `jet`
-- Ojek Online: `gojek`, `grab`, `ojol`, `ojek`, `motor online`
-- General: `online`, `kurir online`
+### ✅ KATEGORISASI LAYANAN BARU (Updated)
 
 #### **Internal Courier Logic:**
-1. Jika ada `assigned_driver_id` → Internal Courier
-2. Jika `vehicle_used` mengandung keywords internal: `internal`, `karyawan`, `staff`, `pegawai`, `driver`, `kurir`
-3. Jika `vehicle_used` mengandung nama kendaraan: `mobil`, `motor`, `pickup`, `truck`, `van`, `avanza`, `xenia`, `hilux`, `carry`, `granmax`
-4. Jika `vehicle_used` mengandung brand kendaraan: `daihatsu`, `toyota`, `suzuki`, `honda`, `yamaha`, `kawasaki`
-5. Jika bukan online courier → Internal Courier
+- Shipment yang memiliki `assigned_driver_id` (tidak null)
+- Artinya shipment ini di-assign melalui endpoint `POST /api/v1/shipments/bulk-assign-driver`
+- Menggunakan driver internal perusahaan
+
+#### **Online Courier Logic:**
+- Shipment yang memiliki `vehicle_used` dan `shipping_cost` (keduanya tidak null)
+- Artinya shipment ini di-complete melalui endpoint `POST /api/v1/shipments/complete-shipments`
+- Menggunakan layanan kurir online/eksternal
+
+### Logika Kategorisasi
+
+```php
+// Internal Courier
+if (!is_null($shipment->assigned_driver_id)) {
+    return 'Internal Courier';
+}
+
+// Online Courier  
+if (!is_null($shipment->vehicle_used) && !is_null($shipment->shipping_cost)) {
+    return 'Online Courier';
+}
+```
 
 ### Role-Based Data Access
 
