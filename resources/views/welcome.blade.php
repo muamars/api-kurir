@@ -109,16 +109,16 @@
         <div class="w-full max-w-sm text-center">
 
             <!-- Ilustrasi -->
-            <div class="mb-6">
+            <div class="mb-5 flex justify-center">
                 <img
                     src="https://api.bintangsempurna.co.id/images/uploads/1768970437-HhuXft064X.png"
                     alt="Kurir"
-                    class="mx-auto w-60"
+                    class="w-full max-w-[220px] h-auto"
                 />
             </div>
 
             <!-- Text -->
-            <h1 class="text-lg font-semibold text-gray-900">
+            <h1 class="text-base font-semibold text-gray-900">
                 Ingin lebih mudah pengiriman
             </h1>
             <p class="text-sm text-gray-500 mt-1">
@@ -126,11 +126,15 @@
             </p>
 
             <!-- Button -->
-            <div class="mt-6">
+            <div class="mt-6 flex justify-center">
                 <a
                     href="https://fe-kurir.vercel.app/"
-                    class="block w-full rounded-full bg-red-600 py-3 text-white font-semibold
-                           hover:bg-red-700 active:scale-95 transition"
+                    class="inline-flex items-center justify-center
+                           rounded-full bg-red-600
+                           px-10 py-3
+                           text-white font-semibold
+                           hover:bg-red-700 active:scale-95
+                           transition"
                 >
                     Masuk
                 </a>
@@ -139,6 +143,7 @@
         </div>
     </div>
 </body>
+
 
 
 </html>
