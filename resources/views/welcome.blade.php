@@ -3,10 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ config('app.name', 'Laravel') }} - Starter Kit</title>
+    <title>{{ config('app.name', 'Laravel') }} - Login kurir</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body class="bg-gray-50">
+{{-- <body class="bg-gray-50">
     <div class="min-h-screen flex flex-col">
         <!-- Navigation -->
         <nav class="bg-white shadow-sm">
@@ -28,6 +28,7 @@
 
         <!-- Hero Section -->
         <div class="flex-1 flex items-center justify-center">
+
             <div class="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
                 <h1 class="text-4xl font-bold text-gray-900 sm:text-5xl md:text-6xl">
                     Laravel Starter Kit
@@ -69,28 +70,7 @@
                     </div>
                 </div>
 
-                <!-- Demo Accounts -->
-                <div class="mt-10 bg-blue-50 border border-blue-200 rounded-lg p-6">
-                    <h3 class="text-lg font-medium text-blue-900 mb-4">Demo Accounts</h3>
-                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                        <div class="text-center">
-                            <div class="text-sm font-medium text-blue-800">Admin</div>
-                            <div class="text-xs text-blue-600">admin@example.com</div>
-                            <div class="text-xs text-blue-500">Full access to all features</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-sm font-medium text-blue-800">Writer</div>
-                            <div class="text-xs text-blue-600">writer@example.com</div>
-                            <div class="text-xs text-blue-500">Blog management only</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-sm font-medium text-blue-800">Manager</div>
-                            <div class="text-xs text-blue-600">manager@example.com</div>
-                            <div class="text-xs text-blue-500">Project management only</div>
-                        </div>
-                    </div>
-                    <p class="mt-4 text-xs text-blue-600">All demo accounts use password: <strong>password</strong></p>
-                </div>
+                
 
                 <!-- CTA -->
                 <div class="mt-10">
@@ -102,8 +82,8 @@
                             </svg>
                         </a>
                     @else
-                        <a href="{{ route('login') }}" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                            Get Started
+                        <a href="https://fe-kurir.vercel.app/" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            Login
                             <svg class="ml-2 -mr-1 w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                                 <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                             </svg>
@@ -122,5 +102,43 @@
             </div>
         </footer>
     </div>
+</body> --}}
+
+<body class="bg-white">
+    <div class="min-h-screen flex items-center justify-center px-4">
+        <div class="w-full max-w-sm text-center">
+
+            <!-- Ilustrasi -->
+            <div class="mb-6">
+                <img
+                    src="https://api.bintangsempurna.co.id/images/uploads/1768970437-HhuXft064X.png"
+                    alt="Kurir"
+                    class="mx-auto w-60"
+                />
+            </div>
+
+            <!-- Text -->
+            <h1 class="text-lg font-semibold text-gray-900">
+                Ingin lebih mudah pengiriman
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">
+                Atur sekarang juga
+            </p>
+
+            <!-- Button -->
+            <div class="mt-6">
+                <a
+                    href="https://fe-kurir.vercel.app/"
+                    class="block w-full rounded-full bg-red-600 py-3 text-white font-semibold
+                           hover:bg-red-700 active:scale-95 transition"
+                >
+                    Masuk
+                </a>
+            </div>
+
+        </div>
+    </div>
 </body>
+
+
 </html>
