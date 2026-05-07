@@ -1329,4 +1329,84 @@ class DashboardController extends Controller
                 ->toArray();
         }
     }
+
+    /**
+     * GET /api/v1/dashboard/delivery-trend
+     * Tren pengiriman per bulan: Kurir Internal vs Kurir Online
+     *
+     * - Internal : assigned_driver_id IS NOT NULL  (driver internal assigned)
+     * - Online   : vehicle_used IS NOT NULL AND shipping_cost IS NOT NULL
+     *
+     * Query params:
+     *   date_from  (default: 3 bulan lalu)
+     *   date_to    (default: hari ini)
+     */
+    public function getDeliveryTrend(Request $request): JsonResponse
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+        ]);
+
+        $dateFrom = Carbon::parse($request->input('date_from', Carbon::now()->subMonths(3)->format('Y-m-d')))->startOfDay();
+        $dateTo   = Carbon::parse($request->input('date_to',   Carbon::now()->format('Y-m-d')))->endOfDay();
+
+        // Base query — semua status kecuali cancelled
+        $query = Shipment::query()
+            ->whereBetween('created_at', [$dateFrom, $dateTo])
+            ->where('status', '!=', 'cancelled')
+            ->select(['id', 'assigned_driver_id', 'vehicle_used', 'shipping_cost', 'created_at']);
+
+        // Role-based scope
+        $user = $request->user();
+        if ($user->hasRole('Kurir')) {
+            $query->where('assigned_driver_id', $user->id);
+        } elseif (! $user->hasRole('Admin')) {
+            $query->where('created_by', $user->id);
+        }
+
+        $shipments = $query->get();
+
+        // Kelompokkan per bulan
+        $grouped = $shipments->groupBy(function ($s) {
+            return Carbon::parse($s->created_at)->format('Y-m');
+        });
+
+        // Isi setiap bulan dalam range (termasuk bulan tanpa data = 0)
+        $result  = [];
+        $current = $dateFrom->copy()->startOfMonth();
+        $end     = $dateTo->copy()->startOfMonth();
+
+        while ($current <= $end) {
+            $key   = $current->format('Y-m');
+            $items = $grouped->get($key, collect());
+
+            $internal = $items->filter(fn($s) => ! is_null($s->assigned_driver_id))->count();
+            $online   = $items->filter(fn($s) => ! empty($s->vehicle_used) && ! is_null($s->shipping_cost))->count();
+
+            $result[] = [
+                'period'   => $current->locale('id')->isoFormat('MMM YYYY'),
+                'period_key' => $key,
+                'online'   => $online,
+                'internal' => $internal,
+                'total'    => $online + $internal,
+            ];
+
+            $current->addMonth();
+        }
+
+        $totalOnline   = $shipments->filter(fn($s) => ! empty($s->vehicle_used) && ! is_null($s->shipping_cost))->count();
+        $totalInternal = $shipments->filter(fn($s) => ! is_null($s->assigned_driver_id))->count();
+
+        return response()->json([
+            'data' => $result,
+            'meta' => [
+                'date_from'      => $dateFrom->format('Y-m-d'),
+                'date_to'        => $dateTo->format('Y-m-d'),
+                'total_online'   => $totalOnline,
+                'total_internal' => $totalInternal,
+                'total'          => $totalOnline + $totalInternal,
+            ],
+        ]);
+    }
 }

@@ -116,6 +116,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/dashboard/shipment-chart', [DashboardController::class, 'getShipmentChartData']);
         Route::get('/dashboard/shipping-service-report', [DashboardController::class, 'getShippingServiceReport']);
         Route::get('/dashboard/shipments-table', [DashboardController::class, 'getShipmentsTable']);
+        Route::get('/dashboard/delivery-trend', [DashboardController::class, 'getDeliveryTrend']);
         Route::get('/dashboard/test', function() {
             return response()->json(['message' => 'Test endpoint works', 'time' => now()]);
         });
