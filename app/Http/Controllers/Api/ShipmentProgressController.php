@@ -150,44 +150,51 @@ class ShipmentProgressController extends Controller
             }
         }
 
+        // Upload foto SEBELUM transaction agar tidak tahan koneksi DB terlalu lama
+        $photoPath = null;
+        $thumbnailPath = null;
+        $receivedPhotoPath = null;
+
         try {
-            // === Handle photo upload ===
-            $photoPath = null;
-            $thumbnailPath = null;
-
             if ($request->hasFile('photo')) {
-                try {
-                    $photo = $request->file('photo');
-                    $filename = time().'_'.uniqid().'.jpg'; // Force JPG for better compression
-
-                    // Use compression method
-                    $compressedPaths = $this->storeCompressedPhoto($photo, 'shipment-photos', $filename);
-                    $photoPath = $compressedPaths['original'];
-                    $thumbnailPath = $compressedPaths['thumbnail'];
-                } catch (\Exception $e) {
-                    \Log::error('Photo upload failed', [
-                        'error' => $e->getMessage(),
-                        'file' => $photo->getClientOriginalName() ?? 'unknown',
-                    ]);
-                    throw new \Exception('Failed to upload photo: '.$e->getMessage());
-                }
+                $photo = $request->file('photo');
+                $filename = time().'_'.uniqid().'.jpg';
+                $compressedPaths = $this->storeCompressedPhoto($photo, 'shipment-photos', $filename);
+                $photoPath = $compressedPaths['original'];
+                $thumbnailPath = $compressedPaths['thumbnail'];
             }
 
-            // === Handle received photo (optional) ===
-            $receivedPhotoPath = null;
             if ($request->hasFile('received_photo')) {
-                try {
-                    $receivedPhoto = $request->file('received_photo');
-                    $receivedFilename = 'received_'.time().'_'.uniqid().'.jpg';
-                    
-                    $compressedReceivedPaths = $this->storeCompressedPhoto($receivedPhoto, 'shipment-photos', $receivedFilename);
-                    $receivedPhotoPath = $compressedReceivedPaths['original'];
-                } catch (\Exception $e) {
-                    \Log::error('Received photo upload failed', [
-                        'error' => $e->getMessage(),
-                    ]);
-                    throw new \Exception('Failed to upload received photo: '.$e->getMessage());
-                }
+                $receivedPhoto = $request->file('received_photo');
+                $receivedFilename = 'received_'.time().'_'.uniqid().'.jpg';
+                $compressedReceivedPaths = $this->storeCompressedPhoto($receivedPhoto, 'shipment-photos', $receivedFilename);
+                $receivedPhotoPath = $compressedReceivedPaths['original'];
+            }
+        } catch (\Exception $e) {
+            \Log::error('Photo upload failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal upload foto: '.$e->getMessage()], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Re-fetch destination dengan lock agar tidak ada race condition
+            // jika dua driver mencoba update destination yang sama bersamaan
+            $destination = ShipmentDestination::lockForUpdate()->find($destinationId);
+            if (!$destination) {
+                DB::rollBack();
+                return response()->json(['message' => 'Destination tidak ditemukan'], 404);
+            }
+
+            // Validasi ulang transisi setelah lock (status mungkin sudah berubah)
+            $currentStatus = $destination->status;
+            if (!isset($validStatusTransitions[$currentStatus]) ||
+                !in_array($newStatus, $validStatusTransitions[$currentStatus])) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Status sudah berubah oleh proses lain, silakan refresh',
+                    'current_status' => $currentStatus,
+                ], 409);
             }
 
             // === Simpan progress ===
@@ -301,16 +308,25 @@ class ShipmentProgressController extends Controller
                 }
             }
 
+            DB::commit();
+
             return response()->json([
                 'message' => 'Progress updated successfully',
                 'data' => $progress->load(['destination', 'driver']),
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
+
+            // Hapus file foto yang sudah terupload jika DB gagal
+            if ($photoPath) Storage::delete($photoPath);
+            if ($thumbnailPath) Storage::delete($thumbnailPath);
+            if ($receivedPhotoPath) Storage::delete($receivedPhotoPath);
+
             \Log::error('Update progress gagal', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'shipment_id' => $shipment->id,
-                'destination_id' => $destination->id,
+                'destination_id' => $destinationId,
                 'status' => $request->status ?? null,
             ]);
 
@@ -1497,11 +1513,14 @@ class ShipmentProgressController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            \Log::error('Failed to remove shipment from bulk assignment', [
+            \Log::error('Failed to remove shipment from bulk assignment — data bulk_assignments mungkin tidak konsisten, perlu dicek manual', [
                 'shipment_id' => $shipmentId,
                 'driver_id' => $driverId,
                 'error' => $e->getMessage(),
             ]);
+            // Rethrow agar outer DB transaction bisa rollback
+            // dan takeover tidak berjalan setengah-setengah
+            throw $e;
         }
     }
 

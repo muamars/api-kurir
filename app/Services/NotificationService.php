@@ -10,6 +10,8 @@ class NotificationService
 {
     public function shipmentCreated(Shipment $shipment): void
     {
+        $creatorName = $shipment->creator?->name ?? 'Unknown';
+
         // Notify all admins about new shipment
         $admins = User::role('Admin')->where('is_active', true)->get();
 
@@ -18,11 +20,11 @@ class NotificationService
                 'user_id' => $admin->id,
                 'type' => 'shipment_created',
                 'title' => 'New Shipment Request',
-                'message' => "New shipment {$shipment->shipment_id} created by {$shipment->creator->name}",
+                'message' => "New shipment {$shipment->shipment_id} created by {$creatorName}",
                 'data' => [
                     'shipment_id' => $shipment->id,
                     'shipment_number' => $shipment->shipment_id,
-                    'creator' => $shipment->creator->name,
+                    'creator' => $creatorName,
                     'priority' => $shipment->priority,
                 ],
             ]);
@@ -48,18 +50,22 @@ class NotificationService
         }
 
         // Notify creator about driver assignment
-        Notification::create([
-            'user_id' => $shipment->created_by,
-            'type' => 'driver_assigned',
-            'title' => 'Driver Assigned',
-            'message' => "Driver {$shipment->driver->name} has been assigned to your shipment {$shipment->shipment_id}",
-            'data' => [
-                'shipment_id' => $shipment->id,
-                'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver->name,
-                'driver_phone' => $shipment->driver->phone,
-            ],
-        ]);
+        if ($shipment->created_by && $shipment->driver) {
+            $driverName  = $shipment->driver->name;
+            $driverPhone = $shipment->driver->phone ?? '-';
+            Notification::create([
+                'user_id' => $shipment->created_by,
+                'type' => 'driver_assigned',
+                'title' => 'Driver Assigned',
+                'message' => "Driver {$driverName} has been assigned to your shipment {$shipment->shipment_id}",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'driver' => $driverName,
+                    'driver_phone' => $driverPhone,
+                ],
+            ]);
+        }
     }
 
     public function shipmentPending(Shipment $shipment): void
@@ -103,6 +109,8 @@ class NotificationService
 
     public function deliveryStarted(Shipment $shipment): void
     {
+        $driverName = $shipment->driver?->name ?? 'Unknown';
+
         // Notify creator about delivery start
         Notification::create([
             'user_id' => $shipment->created_by,
@@ -112,13 +120,15 @@ class NotificationService
             'data' => [
                 'shipment_id' => $shipment->id,
                 'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver->name,
+                'driver' => $driverName,
             ],
         ]);
     }
 
     public function deliveryCompleted(Shipment $shipment): void
     {
+        $driverName = $shipment->driver?->name ?? 'Unknown';
+
         // Notify creator about completion
         Notification::create([
             'user_id' => $shipment->created_by,
@@ -128,7 +138,7 @@ class NotificationService
             'data' => [
                 'shipment_id' => $shipment->id,
                 'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver->name,
+                'driver' => $driverName,
                 'completed_at' => now()->format('Y-m-d H:i:s'),
             ],
         ]);
@@ -141,11 +151,11 @@ class NotificationService
                 'user_id' => $admin->id,
                 'type' => 'delivery_completed',
                 'title' => 'Delivery Completed',
-                'message' => "Shipment {$shipment->shipment_id} completed by {$shipment->driver->name}",
+                'message' => "Shipment {$shipment->shipment_id} completed by {$driverName}",
                 'data' => [
                     'shipment_id' => $shipment->id,
                     'shipment_number' => $shipment->shipment_id,
-                    'driver' => $shipment->driver->name,
+                    'driver' => $driverName,
                 ],
             ]);
         }

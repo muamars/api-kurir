@@ -294,6 +294,7 @@ class ShipmentController extends Controller
 
             $shipments = Shipment::whereIn('id', $request->shipment_ids)
                 ->whereIn('status', ['pending'])
+                ->lockForUpdate()
                 ->get();
 
             if ($shipments->count() !== count($request->shipment_ids)) {
