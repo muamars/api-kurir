@@ -1468,13 +1468,20 @@ class DashboardController extends Controller
 
             $avgMinutes = $countFinished > 0 ? (int) round($totalMinutes / $countFinished) : 0;
 
+            // Shipment level: sudah di-assign ke driver tapi belum mulai dikirim
+            $assignedCount = Shipment::where('assigned_driver_id', $driver->id)
+                ->where('status', 'assigned')
+                ->whereBetween('created_at', [$dateFrom, $dateTo])
+                ->count();
+
             return [
-                'driver'               => ['id' => $driver->id, 'name' => $driver->name],
-                'picked'               => (clone $prog)->where('status', 'picked')->count(),
-                'in_progress'          => (clone $prog)->where('status', 'in_progress')->count(),
-                'arrived'              => (clone $prog)->where('status', 'arrived')->count(),
-                'delivered'            => (clone $prog)->where('status', 'delivered')->count(),
-                'takeover'             => (clone $prog)->where('status', 'takeover')->count(),
+                'driver'                 => ['id' => $driver->id, 'name' => $driver->name],
+                'assigned'               => $assignedCount,
+                'picked'                 => (clone $prog)->where('status', 'picked')->count(),
+                'in_progress'            => (clone $prog)->where('status', 'in_progress')->count(),
+                'arrived'                => (clone $prog)->where('status', 'arrived')->count(),
+                'delivered'              => (clone $prog)->where('status', 'delivered')->count(),
+                'takeover'               => (clone $prog)->where('status', 'takeover')->count(),
                 'total_duration_minutes' => $totalMinutes,
                 'avg_duration_minutes'   => $avgMinutes,
                 'deliveries_counted'     => $countFinished,
