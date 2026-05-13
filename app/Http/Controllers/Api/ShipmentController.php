@@ -617,7 +617,7 @@ class ShipmentController extends Controller
                 ])
                 ->whereIn('id', $shipmentIds)
                 ->where('assigned_driver_id', $user->id) // ✅ FILTER: Only shipments still assigned to this driver
-                ->whereNotIn('status', ['cancelled']); // ✅ FILTER: Exclude cancelled shipments only
+                ->whereNotIn('status', ['cancelled', 'completed']); // ✅ FILTER: Exclude terminal statuses — driver has no more action
 
                 // Additional status filter if requested
                 if ($request->filled('status') && $request->status !== 'all') {

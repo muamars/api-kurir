@@ -138,6 +138,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Master data
         Route::get('/divisions', [DivisionController::class, 'index']);
         Route::get('/drivers', [UserController::class, 'getDrivers']);
+        Route::get('/drivers/standby', [UserController::class, 'getStandbyDrivers']);
         Route::get('/users', [UserController::class, 'getUsers']);
 
         // Customer Management (all authenticated users can view)

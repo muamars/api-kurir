@@ -24,6 +24,21 @@ class UserController extends Controller
         ]);
     }
 
+    public function getStandbyDrivers(): JsonResponse
+    {
+        $drivers = User::role('Kurir')
+            ->where('is_active', true)
+            ->whereDoesntHave('assignedShipments', function ($q) {
+                $q->whereIn('status', ['assigned', 'in_progress']);
+            })
+            ->with(['division:id,name,description'])
+            ->get(['id', 'name', 'phone', 'division_id']);
+
+        return response()->json([
+            'data' => $drivers,
+        ]);
+    }
+
     public function getUsers(Request $request): JsonResponse
     {
         $query = User::with(['division:id,name,description', 'roles:id,name']);
