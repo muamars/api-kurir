@@ -985,7 +985,7 @@ class ShipmentProgressController extends Controller
             $shipmentIds = json_decode($bulkAssignment->shipment_ids);
             
             // Get shipments with their destinations and progress
-            $shipments = Shipment::with(['destinations.statusHistories', 'creator'])
+            $shipments = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator'])
                 ->whereIn('id', $shipmentIds)
                 ->get();
 
@@ -1033,50 +1033,60 @@ class ShipmentProgressController extends Controller
 
                 foreach ($shipment->destinations as $destination) {
                     $totalDestinations++;
-                    
+
                     $destinationTiming = $this->analyzeRouteDestinationTiming($destination);
-                    
+
                     $destinationData = [
                         'destination_id' => $destination->id,
+                        'sequence_order' => $destination->sequence_order,
                         'delivery_address' => $destination->delivery_address,
                         'receiver_name' => $destination->receiver_name,
+                        'receiver_company' => $destination->receiver_company,
                         'current_status' => $destination->status,
-                        'distance_category' => $this->categorizeDistance($destination->delivery_address),
                         'timing' => $destinationTiming,
                     ];
 
                     if ($destinationTiming) {
-                        $completedDestinations++;
-                        $allDeliveryTimes[] = $destinationTiming['delivery_time_minutes'];
-
-                        // Track route start and end times
+                        // Track route & shipment START using pickup_time (always non-null here)
                         if (!$routeStartTime || $destinationTiming['pickup_time'] < $routeStartTime) {
                             $routeStartTime = $destinationTiming['pickup_time'];
                         }
-                        if (!$routeEndTime || $destinationTiming['delivered_at'] > $routeEndTime) {
-                            $routeEndTime = $destinationTiming['delivered_at'];
-                        }
-
-                        // Track shipment start and end times
                         if (!$shipmentStartTime || $destinationTiming['pickup_time'] < $shipmentStartTime) {
                             $shipmentStartTime = $destinationTiming['pickup_time'];
                         }
-                        if (!$shipmentEndTime || $destinationTiming['delivered_at'] > $shipmentEndTime) {
-                            $shipmentEndTime = $destinationTiming['delivered_at'];
+
+                        if ($destinationTiming['delivered_at']) {
+                            // Destination is delivered → count as completed
+                            $completedDestinations++;
+                            if ($destinationTiming['delivery_time_minutes'] !== null) {
+                                $allDeliveryTimes[] = $destinationTiming['delivery_time_minutes'];
+                            }
+
+                            // Track route & shipment END using delivered_at
+                            if (!$routeEndTime || $destinationTiming['delivered_at'] > $routeEndTime) {
+                                $routeEndTime = $destinationTiming['delivered_at'];
+                            }
+                            if (!$shipmentEndTime || $destinationTiming['delivered_at'] > $shipmentEndTime) {
+                                $shipmentEndTime = $destinationTiming['delivered_at'];
+                            }
+                        } else {
+                            // Picked but not yet delivered
+                            $shipmentCompleted = false;
                         }
                     } else {
+                        // Not started yet
                         $shipmentCompleted = false;
                     }
 
                     $shipmentData['destinations'][] = $destinationData;
                 }
 
-                // Calculate shipment timing if completed
+                // Calculate shipment timing if all destinations delivered
                 if ($shipmentCompleted && $shipmentStartTime && $shipmentEndTime) {
                     $completedShipments++;
                     $duration = $shipmentEndTime->diff($shipmentStartTime);
                     $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
-                    
+
                     $shipmentData['shipment_timing'] = [
                         'start_time' => $shipmentStartTime->format('Y-m-d H:i:s'),
                         'end_time' => $shipmentEndTime->format('Y-m-d H:i:s'),
@@ -1145,39 +1155,92 @@ class ShipmentProgressController extends Controller
 
     private function analyzeRouteDestinationTiming($destination): ?array
     {
-        $histories = $destination->statusHistories()
-            ->orderBy('changed_at', 'asc')
-            ->get();
+        // ── Primary source: ShipmentProgress (written explicitly by controller) ──
+        // Use property accessor (eager-loaded), sort in-memory
+        $progressRecords = $destination->progress
+            ->sortBy('progress_time')
+            ->values();
 
-        if ($histories->isEmpty()) {
+        // ── Fallback: destination_status_histories (written by Observer) ──
+        $historyRecords = $progressRecords->isEmpty()
+            ? $destination->statusHistories->sortBy('changed_at')->values()
+            : collect();
+
+        if ($progressRecords->isEmpty() && $historyRecords->isEmpty()) {
             return null;
         }
 
-        $pickupTime = null;
-        $deliveredTime = null;
+        // Build times map — key: status, value: Carbon timestamp
+        $times = [];
 
-        foreach ($histories as $history) {
-            if ($history->new_status === 'picked' && !$pickupTime) {
-                $pickupTime = $history->changed_at;
+        if ($progressRecords->isNotEmpty()) {
+            foreach ($progressRecords as $p) {
+                if (!array_key_exists($p->status, $times)) {
+                    $times[$p->status] = $p->progress_time; // Carbon
+                }
             }
-            if ($history->new_status === 'delivered') {
-                $deliveredTime = $history->changed_at;
-                break;
+            // finished: keep last occurrence
+            $lastFinished = $progressRecords->last(fn ($p) => $p->status === 'finished');
+            if ($lastFinished) {
+                $times['finished'] = $lastFinished->progress_time;
+            }
+        } else {
+            foreach ($historyRecords as $h) {
+                if (!array_key_exists($h->new_status, $times)) {
+                    $times[$h->new_status] = $h->changed_at; // Carbon
+                }
+            }
+            $lastFinished = $historyRecords->last(fn ($h) => $h->new_status === 'finished');
+            if ($lastFinished) {
+                $times['finished'] = $lastFinished->changed_at;
             }
         }
 
-        if (!$pickupTime || !$deliveredTime) {
+        // No records at all
+        if (empty($times)) {
             return null;
         }
 
-        $duration = $deliveredTime->diff($pickupTime);
-        $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
+        $pickedAt    = $times['picked']      ?? null;
+        $inProgAt    = $times['in_progress'] ?? null;
+        $deliveredAt = $times['delivered']   ?? null;
+        $finishedAt  = $times['finished']    ?? null;
+
+        // Earliest known timestamp — used as route anchor when picked is absent
+        $firstKnown = collect($times)->sortBy(fn ($t) => $t->timestamp)->first();
+
+        // Effective departure: picked → in_progress (fallback)
+        $departureAt = $pickedAt ?? $inProgAt;
+
+        // Duration: departure → delivered (fallback to finished if delivered is absent)
+        $durationMinutes = null;
+        $durationHuman   = null;
+        $durationEnd = $deliveredAt ?? $finishedAt;
+        if ($departureAt && $durationEnd) {
+            $diff = $durationEnd->diff($departureAt);
+            $durationMinutes = ($diff->days * 24 * 60) + ($diff->h * 60) + $diff->i;
+            $durationHuman   = $this->formatDuration($diff);
+        }
+
+        $fmt = fn ($dt) => $dt?->format('Y-m-d H:i:s');
 
         return [
-            'pickup_time' => $pickupTime,
-            'delivered_at' => $deliveredTime,
-            'delivery_time_minutes' => $totalMinutes,
-            'delivery_time_human' => $this->formatDuration($duration),
+            // Carbon instances — used by route start/end tracking above
+            'pickup_time'  => $departureAt ?? $firstKnown,
+            'delivered_at' => $durationEnd,
+
+            // All formatted timestamps for API output
+            'timestamps' => [
+                'picked'      => $fmt($pickedAt),
+                'in_progress' => $fmt($times['in_progress'] ?? null),
+                'arrived'     => $fmt($times['arrived']     ?? null),
+                'delivered'   => $fmt($deliveredAt),
+                'returning'   => $fmt($times['returning']   ?? null),
+                'finished'    => $fmt($times['finished']    ?? null),
+            ],
+
+            'delivery_time_minutes' => $durationMinutes,
+            'delivery_time_human'   => $durationHuman,
         ];
     }
 

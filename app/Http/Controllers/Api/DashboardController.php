@@ -70,6 +70,7 @@ class DashboardController extends Controller
 
         return [
             'total' => $query->count(),
+            'today' => $query->clone()->whereDate('created_at', today())->count(),
             'pending' => $query->clone()->where('status', 'pending')->count(),
             'approved' => $query->clone()->where('status', 'approved')->count(),
             'assigned' => $query->clone()->where('status', 'assigned')->count(),
@@ -144,6 +145,12 @@ class DashboardController extends Controller
             'unassigned_shipments' => Shipment::where('status', 'approved')
                 ->whereNull('assigned_driver_id')->count(),
             'active_drivers' => User::role('Kurir')->where('is_active', true)->count(),
+            'standby_drivers' => User::role('Kurir')
+                ->where('is_active', true)
+                ->whereDoesntHave('assignedShipments', function ($q) {
+                    $q->whereIn('status', ['assigned', 'in_progress']);
+                })
+                ->count(),
             'total_users' => User::where('is_active', true)->count(),
             'recent_shipments' => Shipment::with(['creator', 'driver'])
                 ->orderBy('created_at', 'desc')

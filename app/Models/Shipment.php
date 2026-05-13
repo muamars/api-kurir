@@ -38,6 +38,7 @@ class Shipment extends Model
         'surat_pengantar_kerja',
         'cancelled_by',
         'cancelled_at',
+        'cancel_reason',
         'shipping_cost',
         'vehicle_used',
         'completion_photo',

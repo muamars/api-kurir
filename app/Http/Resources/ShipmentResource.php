@@ -81,6 +81,13 @@ class ShipmentResource extends JsonResource
                 ];
             }),
 
+            'cancel_reason' => $this->cancel_reason,
+            'cancelled_at' => $this->cancelled_at?->format('Y-m-d H:i:s'),
+            'cancelled_by' => $this->when($this->cancelledBy, [
+                'id' => $this->cancelledBy?->id,
+                'name' => $this->cancelledBy?->name,
+            ]),
+
             'progress_count' => $this->progress->count(),
             'completed_destinations' => $this->destinations->where('status', 'completed')->count(),
             'total_destinations' => $this->destinations->count(),

@@ -8,6 +8,7 @@ use App\Http\Requests\StoreShipmentRequest;
 use App\Http\Requests\UpdateShipmentRequest;
 use App\Http\Resources\ShipmentResource;
 use App\Models\Shipment;
+use App\Models\ShipmentProgress;
 use App\Services\NotificationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -544,10 +545,15 @@ class ShipmentController extends Controller
             ], 400);
         }
 
+        $request->validate([
+            'cancel_reason' => 'nullable|string|max:1000',
+        ]);
+
         $shipment->update([
             'status' => 'cancelled',
             'cancelled_by' => auth()->id(),
             'cancelled_at' => now(),
+            'cancel_reason' => $request->cancel_reason,
         ]);
 
         app(\App\Services\NotificationService::class)->shipmentCancelled($shipment->fresh(['creator', 'driver']));
@@ -904,10 +910,27 @@ class ShipmentController extends Controller
                     'completed_by' => auth()->id(),
                 ]);
 
-                // Update all destinations to finished
-                $shipment->destinations()->update([
-                    'status' => 'finished'
-                ]);
+                // Update each destination individually so the Observer fires
+                // and creates DestinationStatusHistory records for timing analytics
+                $shipment->load('destinations');
+                $completedAt = now();
+
+                foreach ($shipment->destinations as $destination) {
+                    if ($destination->status !== 'finished') {
+                        $destination->update(['status' => 'finished']); // Observer records history
+
+                        // Create ShipmentProgress record for timing analytics
+                        $driverId = $shipment->assigned_driver_id ?? auth()->id();
+                        ShipmentProgress::create([
+                            'shipment_id'    => $shipment->id,
+                            'destination_id' => $destination->id,
+                            'driver_id'      => $driverId,
+                            'status'         => 'finished',
+                            'progress_time'  => $completedAt,
+                            'note'           => 'Diselesaikan via complete-shipments',
+                        ]);
+                    }
+                }
 
                 // Send notification
                 app(NotificationService::class)->shipmentCompleted($shipment->fresh(['creator', 'driver']));
