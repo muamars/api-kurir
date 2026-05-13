@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shipment;
+use App\Models\ShipmentProgress;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -1413,6 +1414,78 @@ class DashboardController extends Controller
                 'total_online'   => $totalOnline,
                 'total_internal' => $totalInternal,
                 'total'          => $totalOnline + $totalInternal,
+            ],
+        ]);
+    }
+
+    /**
+     * GET /dashboard/driver-accumulation
+     * Statistik pengiriman per driver, digroup by status shipment + takeover.
+     * Params: date_from, date_to (default: 3 bulan terakhir)
+     */
+    public function getDriverAccumulation(Request $request): JsonResponse
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+        ]);
+
+        $dateFrom = Carbon::parse($request->input('date_from', Carbon::now()->subMonths(3)->startOfMonth()->format('Y-m-d')))->startOfDay();
+        $dateTo   = Carbon::parse($request->input('date_to', Carbon::now()->format('Y-m-d')))->endOfDay();
+
+        // Ambil semua driver aktif
+        $drivers = User::role('Kurir')
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        $result = $drivers->map(function (User $driver) use ($dateFrom, $dateTo) {
+            // Gunakan ShipmentProgress (log aktivitas) agar setiap tahap pengiriman
+            // selalu punya nilai — bukan snapshot status saat ini.
+            $prog = ShipmentProgress::where('driver_id', $driver->id)
+                ->whereBetween('progress_time', [$dateFrom, $dateTo]);
+
+            // Hitung total durasi: dari status 'picked' ke 'delivered' per destinasi
+            $pickedRows = (clone $prog)
+                ->where('status', 'picked')
+                ->get(['destination_id', 'progress_time'])
+                ->keyBy('destination_id');
+
+            $deliveredRows = (clone $prog)
+                ->where('status', 'delivered')
+                ->whereIn('destination_id', $pickedRows->keys())
+                ->get(['destination_id', 'progress_time'])
+                ->keyBy('destination_id');
+
+            $totalMinutes  = 0;
+            $countFinished = 0;
+            foreach ($pickedRows as $destId => $picked) {
+                if (isset($deliveredRows[$destId])) {
+                    $totalMinutes += abs($picked->progress_time->diffInMinutes($deliveredRows[$destId]->progress_time));
+                    $countFinished++;
+                }
+            }
+
+            $avgMinutes = $countFinished > 0 ? (int) round($totalMinutes / $countFinished) : 0;
+
+            return [
+                'driver'               => ['id' => $driver->id, 'name' => $driver->name],
+                'picked'               => (clone $prog)->where('status', 'picked')->count(),
+                'in_progress'          => (clone $prog)->where('status', 'in_progress')->count(),
+                'arrived'              => (clone $prog)->where('status', 'arrived')->count(),
+                'delivered'            => (clone $prog)->where('status', 'delivered')->count(),
+                'takeover'             => (clone $prog)->where('status', 'takeover')->count(),
+                'total_duration_minutes' => $totalMinutes,
+                'avg_duration_minutes'   => $avgMinutes,
+                'deliveries_counted'     => $countFinished,
+            ];
+        })->values();
+
+        return response()->json([
+            'data' => $result,
+            'meta' => [
+                'date_from' => $dateFrom->format('Y-m-d'),
+                'date_to'   => $dateTo->format('Y-m-d'),
             ],
         ]);
     }
