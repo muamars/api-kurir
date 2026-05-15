@@ -23,6 +23,9 @@ class DatabaseSeeder extends Seeder
 
             // 3. Sample Data (Users, Shipments, etc)
             CourierTrackingSeeder::class,
+
+            // 4. Super Admin user
+            SuperAdminSeeder::class,
         ]);
     }
 }

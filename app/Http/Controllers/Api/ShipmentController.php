@@ -83,8 +83,8 @@ class ShipmentController extends Controller
         // ✅ ROLE-BASED FILTERING: User hanya bisa lihat shipment mereka sendiri
         $user = $request->user();
         
-        // Admin bisa lihat semua shipment
-        if (! $user->hasRole('Admin')) {
+        // Admin & Super Admin bisa lihat semua shipment
+        if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
             if ($user->hasRole('Kurir')) {
                 // Kurir hanya bisa lihat shipment yang ditugaskan ke mereka
                 $query->where('assigned_driver_id', $user->id);

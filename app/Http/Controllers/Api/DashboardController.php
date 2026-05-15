@@ -42,7 +42,7 @@ class DashboardController extends Controller
         ];
 
         // Role-specific data - tetap private untuk masing-masing user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             $stats['admin'] = $this->getAdminStats();
         } elseif ($user->hasRole('Kurir')) {
             $stats['driver'] = $this->getDriverStats($user);
@@ -58,7 +58,7 @@ class DashboardController extends Controller
     private function getPrivateShipmentStats($user): array
     {
         // ✅ PRIVATE DASHBOARD: Data berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua shipment
             $query = Shipment::query();
         } elseif ($user->hasRole('Kurir')) {
@@ -89,7 +89,7 @@ class DashboardController extends Controller
         $thisMonth = now()->startOfMonth();
 
         // ✅ PRIVATE DASHBOARD: Data delivery berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua delivery
             $query = Shipment::query();
         } elseif ($user->hasRole('Kurir')) {
@@ -115,7 +115,7 @@ class DashboardController extends Controller
         $thisMonth = now()->startOfMonth();
 
         // ✅ PRIVATE DASHBOARD: Data performa berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat performa keseluruhan sistem
             $query = Shipment::query()->where('updated_at', '>=', $thisMonth);
         } elseif ($user->hasRole('Kurir')) {
@@ -226,7 +226,7 @@ class DashboardController extends Controller
         $endDate = now()->endOfWeek();
 
         // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
             $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
         } elseif ($user->hasRole('Kurir')) {
@@ -265,7 +265,7 @@ class DashboardController extends Controller
         $endDate = now()->endOfMonth();
 
         // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
             $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
         } elseif ($user->hasRole('Kurir')) {
@@ -291,7 +291,7 @@ class DashboardController extends Controller
         $endDate = now()->endOfYear();
 
         // ✅ PRIVATE DASHBOARD: Chart data berbeda berdasarkan role user
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
             $query = Shipment::whereBetween('created_at', [$startDate, $endDate]);
         } elseif ($user->hasRole('Kurir')) {
@@ -338,7 +338,7 @@ class DashboardController extends Controller
         // ✅ PRIVATE DASHBOARD: Base query berbeda berdasarkan role user
         $query = Shipment::with(['category', 'vehicleType', 'creator.division']);
         
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
             // Query tetap tanpa filter
         } elseif ($user->hasRole('Kurir')) {
@@ -405,7 +405,7 @@ class DashboardController extends Controller
                     'category_id' => $request->category_id,
                     'vehicle_type_id' => $request->vehicle_type_id,
                 ],
-                'user_scope' => $user->hasRole('Admin') ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
+                'user_scope' => $user->hasAnyRole(['Admin', 'Super Admin']) ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
             ],
         ]);
     }
@@ -1017,7 +1017,7 @@ class DashboardController extends Controller
         // Base query berdasarkan role user - hanya shipment completed
         $query = Shipment::query()->where('status', 'completed');
         
-        if ($user->hasRole('Admin')) {
+        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
         } elseif ($user->hasRole('Kurir')) {
             // Kurir hanya melihat shipment yang assigned ke mereka
@@ -1099,7 +1099,7 @@ class DashboardController extends Controller
                     'to' => $request->date_to ?? 'All time',
                 ],
                 'group_by' => $request->group_by,
-                'user_scope' => $user->hasRole('Admin') ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
+                'user_scope' => $user->hasAnyRole(['Admin', 'Super Admin']) ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
                 'categorization_logic' => [
                     'internal' => 'Shipment dengan assigned_driver_id (via bulk-assign-driver)',
                     'online' => 'Shipment dengan vehicle_used & shipping_cost (via complete-shipments)',
@@ -1369,7 +1369,7 @@ class DashboardController extends Controller
         $user = $request->user();
         if ($user->hasRole('Kurir')) {
             $query->where('assigned_driver_id', $user->id);
-        } elseif (! $user->hasRole('Admin')) {
+        } elseif (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
             $query->where('created_by', $user->id);
         }
 

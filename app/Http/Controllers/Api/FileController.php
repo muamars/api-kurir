@@ -26,7 +26,7 @@ class FileController extends Controller
         }
 
         // Check authorization
-        if (! $request->user()->hasRole('Admin') && $shipment->created_by !== $request->user()->id) {
+        if (! $request->user()->hasAnyRole(['Admin', 'Super Admin']) && $shipment->created_by !== $request->user()->id) {
             return response()->json([
                 'message' => 'Unauthorized',
             ], 403);

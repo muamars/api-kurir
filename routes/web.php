@@ -43,3 +43,21 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::resource('users', UserController::class);
     Route::resource('roles', RoleController::class);
 });
+
+// Visualisasi alur aplikasi — dev only
+Route::get('/arsitektur', function () {
+    return view('arsitektur');
+})->name('arsitektur');
+
+// /_brain-logic — alias publik untuk laravel-brain viewer
+if (app()->isLocal()) {
+    Route::prefix('_brain-logic')->group(function () {
+        Route::get('/api/source', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'source']);
+        Route::post('/api/scan', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'scan']);
+        Route::post('/api/stress-test', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'stressTest']);
+        Route::get('/api/stress-test/{jobId}', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'stressTestPoll']);
+        Route::get('/api/context', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'context']);
+        Route::post('/api/generate-rules', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'generateRules']);
+        Route::get('/{any?}', [\LaraMint\LaravelBrain\Http\Controllers\BrainController::class, 'serve'])->where('any', '.*');
+    });
+}

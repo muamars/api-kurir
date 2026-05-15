@@ -17,7 +17,7 @@ class VehicleTypeController extends Controller
         $query = VehicleType::query()->withCount('shipments');
 
         // Non-admin users only see active vehicle types
-        if (! $request->user()->hasRole('Admin')) {
+        if (! $request->user()->hasAnyRole(['Admin', 'Super Admin'])) {
             $query->where('is_active', true);
         }
 

@@ -436,7 +436,7 @@ class ShipmentProgressController extends Controller
         $user = auth()->user();
         
         // Authorization: Admin bisa lihat semua, Kurir hanya yang assigned ke mereka, User hanya yang mereka buat
-        if (!$user->hasRole('Admin')) {
+        if (!$user->hasAnyRole(['Admin', 'Super Admin'])) {
             if ($user->hasRole('Kurir')) {
                 // Kurir hanya bisa lihat shipment yang assigned ke mereka
                 if ($shipment->assigned_driver_id !== $user->id) {
@@ -1698,7 +1698,7 @@ class ShipmentProgressController extends Controller
         $user = $request->user();
         
         // Only admin can access this endpoint
-        if (!$user->hasRole('Admin')) {
+        if (!$user->hasAnyRole(['Admin', 'Super Admin'])) {
             return response()->json([
                 'message' => 'This endpoint is only for admin'
             ], 403);

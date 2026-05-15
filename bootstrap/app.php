@@ -22,6 +22,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(append: [
             \App\Http\Middleware\ForceJsonResponse::class,
         ]);
+
+        // Proteksi /_laravel-brain — hanya Admin yang sudah login (local only)
+        $middleware->web(append: [
+            \App\Http\Middleware\ProtectBrainViewer::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

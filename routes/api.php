@@ -159,17 +159,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'index']);
         Route::get('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'show']);
 
-        // Vehicle Types Management (Admin only)
-        Route::middleware('role:Admin')->group(function () {
+        // Vehicle Types Management (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
             Route::post('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'store']);
             Route::put('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'update']);
         });
-        
-        // DELETE route outside group to avoid conflicts
-        Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy'])->middleware('role:Admin');
 
-        // Role & Permission Management Routes (Admin only)
-        Route::middleware('role:Admin')->group(function () {
+        Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy'])->middleware('role:Admin|Super Admin');
+
+        // Role & Permission Management Routes (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
             // User Management
             Route::get('/users/{user}', [UserController::class, 'show']);
             Route::apiResource('users', UserController::class)->except(['index', 'show']);

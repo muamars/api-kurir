@@ -19,7 +19,7 @@ class ShipmentCategoryController extends Controller
         $query = ShipmentCategory::query()->withCount('shipments');
 
         // Non-admin users only see active categories
-        if (! $request->user()->hasRole('Admin')) {
+        if (! $request->user()->hasAnyRole(['Admin', 'Super Admin'])) {
             $query->where('is_active', true);
         }
 
