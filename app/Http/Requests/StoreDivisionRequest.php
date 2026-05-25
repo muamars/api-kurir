@@ -8,7 +8,7 @@ class StoreDivisionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->hasRole('Admin');
+        return $this->user()->hasAnyRole(['Admin', 'Super Admin']);
     }
 
     public function rules(): array

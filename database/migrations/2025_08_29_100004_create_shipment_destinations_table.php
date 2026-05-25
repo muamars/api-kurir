@@ -17,7 +17,7 @@ return new class extends Migration
             $table->text('delivery_address');
             $table->text('shipment_note')->nullable();
             $table->integer('sequence_order')->default(1); // Urutan pengiriman
-            $table->enum('status', ['pending', 'in_progress', 'completed', 'failed'])->default('pending');
+            $table->enum('status', ['pending', 'in_progress', 'not_delivered', 'completed', 'failed'])->default('pending');
             $table->timestamps();
             $table->index(['shipment_id', 'sequence_order']);
         });

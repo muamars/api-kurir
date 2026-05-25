@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
+use App\Models\DriverStatusLog;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -149,7 +151,16 @@ class UserController extends Controller
             ], 400);
         }
 
-        $user->delete();
+        try {
+            $user->delete();
+        } catch (QueryException $e) {
+            if ($e->getCode() === '23000') {
+                return response()->json([
+                    'message' => 'Tidak dapat menghapus pengguna ini karena masih memiliki data terkait (riwayat pengiriman, progress, dll). Nonaktifkan pengguna jika tidak ingin digunakan lagi.',
+                ], 409);
+            }
+            throw $e;
+        }
 
         return response()->json([
             'message' => 'User deleted successfully',
@@ -194,7 +205,7 @@ class UserController extends Controller
         ]);
     }
 
-    public function toggleMyStatus(): JsonResponse
+    public function toggleMyStatus(Request $request): JsonResponse
     {
         $user = auth()->user();
 
@@ -207,6 +218,16 @@ class UserController extends Controller
 
         $user->is_active = ! $user->is_active;
         $user->save();
+
+        $action = $user->is_active ? 'online' : 'offline';
+        $note = $request->input('note');
+
+        DriverStatusLog::create([
+            'user_id' => $user->id,
+            'action' => $action,
+            'note' => $note ?: null,
+            'logged_at' => now(),
+        ]);
 
         $status = $user->is_active ? 'aktif' : 'nonaktif';
         $message = $user->is_active
@@ -222,6 +243,16 @@ class UserController extends Controller
                 'status' => $status,
             ],
         ]);
+    }
+
+    public function myStatusLogs(): JsonResponse
+    {
+        $logs = DriverStatusLog::where('user_id', auth()->id())
+            ->orderByDesc('logged_at')
+            ->limit(50)
+            ->get(['id', 'action', 'note', 'logged_at']);
+
+        return response()->json(['data' => $logs]);
     }
 
     public function getMyStatus(): JsonResponse

@@ -150,6 +150,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Kurir self-service status toggle
         Route::post('/my-status/toggle', [UserController::class, 'toggleMyStatus']);
         Route::get('/my-status', [UserController::class, 'getMyStatus']);
+        Route::get('/my-status/logs', [UserController::class, 'myStatusLogs']);
 
         // Shipment Categories (all users can view)
         Route::get('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'index']);
