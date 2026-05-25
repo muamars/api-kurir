@@ -255,6 +255,48 @@ class UserController extends Controller
         return response()->json(['data' => $logs]);
     }
 
+    public function allDriverStatusLogs(Request $request): JsonResponse
+    {
+        $query = DriverStatusLog::with('user:id,name,phone')
+            ->orderByDesc('logged_at');
+
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        if ($request->filled('action')) {
+            $query->where('action', $request->action);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('logged_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('logged_at', '<=', $request->date_to);
+        }
+
+        $logs = $query->paginate($request->input('per_page', 50));
+
+        // Summary per driver
+        $summary = DriverStatusLog::selectRaw('user_id, action, count(*) as total')
+            ->when($request->filled('user_id'), fn($q) => $q->where('user_id', $request->user_id))
+            ->groupBy('user_id', 'action')
+            ->with('user:id,name')
+            ->get()
+            ->groupBy('user_id')
+            ->map(fn($rows) => [
+                'driver' => $rows->first()->user?->name,
+                'online_count' => $rows->where('action', 'online')->first()?->total ?? 0,
+                'offline_count' => $rows->where('action', 'offline')->first()?->total ?? 0,
+            ]);
+
+        return response()->json([
+            'data' => $logs,
+            'summary' => $summary->values(),
+        ]);
+    }
+
     public function getMyStatus(): JsonResponse
     {
         $user = auth()->user();

@@ -152,6 +152,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/my-status', [UserController::class, 'getMyStatus']);
         Route::get('/my-status/logs', [UserController::class, 'myStatusLogs']);
 
+        // Admin: semua driver status logs
+        Route::get('/admin/driver-status-logs', [UserController::class, 'allDriverStatusLogs']);
+
         // Shipment Categories (all users can view)
         Route::get('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'index']);
         Route::get('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'show']);
