@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('shipment_photos', function (Blueprint $table) {
@@ -21,13 +18,11 @@ return new class extends Migration
             $table->text('notes')->nullable();
             $table->timestamp('uploaded_at')->useCurrent();
             $table->timestamps();
+
             $table->index(['shipment_id', 'type']);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('shipment_photos');

@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('customers', function (Blueprint $table) {
@@ -18,15 +15,14 @@ return new class extends Migration
             $table->string('phone');
             $table->text('address');
             $table->boolean('is_active')->default(true);
+            $table->enum('category', ['customer', 'supplier'])->default('customer');
             $table->timestamps();
+
             $table->index('company_name');
             $table->index('is_active');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('customers');

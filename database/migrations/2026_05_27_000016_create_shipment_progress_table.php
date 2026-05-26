@@ -13,14 +13,17 @@ return new class extends Migration
             $table->foreignId('shipment_id')->constrained()->onDelete('cascade');
             $table->foreignId('destination_id')->constrained('shipment_destinations')->onDelete('cascade');
             $table->foreignId('driver_id')->constrained('users');
-            $table->enum('status', ['arrived', 'delivered', 'failed'])->default('arrived');
+            $table->enum('status', [
+                'picked', 'in_progress', 'arrived', 'delivered',
+                'returning', 'finished', 'takeover', 'failed',
+            ])->default('picked');
             $table->timestamp('progress_time');
-            $table->string('photo_url')->nullable(); // Foto bukti sampai
-            $table->string('photo_thumbnail')->nullable(); // Thumbnail foto
+            $table->string('photo_url')->nullable();
+            $table->string('photo_thumbnail')->nullable();
             $table->text('note')->nullable();
-            $table->string('action_button')->nullable(); // Status tombol aksi
-            $table->string('receiver_name')->nullable(); // Nama penerima aktual
-            $table->string('received_photo_url')->nullable(); // Foto penerima
+            $table->string('action_button')->nullable();
+            $table->string('receiver_name')->nullable();
+            $table->string('received_photo_url')->nullable();
             $table->timestamps();
 
             $table->index(['shipment_id', 'destination_id']);

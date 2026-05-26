@@ -22,6 +22,11 @@ class ShipmentCategorySeeder extends Seeder
                 'description' => 'Pengiriman barang atau dokumen langsung ke penerima, baik untuk kebutuhan personal maupun bisnis.',
                 'is_active' => true,
             ],
+            [
+                'name' => ' Jemput',
+                'description' => 'Penjemputan ',
+                'is_active' => true,
+            ],
            
         ];
 

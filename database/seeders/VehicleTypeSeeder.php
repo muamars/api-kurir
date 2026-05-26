@@ -24,24 +24,7 @@ class VehicleTypeSeeder extends Seeder
                 'description' => 'Mobil pick up untuk barang berukuran sedang hingga besar',
                 'is_active' => true,
             ],
-            [
-                'name' => 'Gojek',
-                'code' => 'GJK',
-                'description' => 'Gojek mobil atau motor',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'Grab',
-                'code' => 'GRB',
-                'description' => 'Grab mobil atau motor',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'Lalamove',
-                'code' => 'LMV',
-                'description' => 'Lalamove mobil atau motor',
-                'is_active' => true,
-            ],
+           
 
         ];
 

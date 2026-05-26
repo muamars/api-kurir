@@ -21,6 +21,7 @@ return new class extends Migration
             $table->text('courier_notes')->nullable();
             $table->enum('priority', ['regular', 'urgent'])->default('regular');
             $table->dateTime('deadline')->nullable();
+            $table->boolean('deadline_locked')->default(true);
             $table->dateTime('scheduled_delivery_datetime')->nullable();
             $table->string('surat_pengantar_kerja')->nullable();
             $table->string('attachment_path')->nullable();
@@ -30,6 +31,7 @@ return new class extends Migration
             $table->unsignedBigInteger('tugas_pengiriman_id')->nullable();
             $table->bigInteger('shipping_cost')->nullable();
             $table->string('vehicle_used')->nullable();
+            $table->string('online_tracking_url')->nullable();
             $table->string('completion_photo')->nullable();
             $table->timestamp('completed_at')->nullable();
             $table->unsignedBigInteger('completed_by')->nullable();
@@ -38,7 +40,7 @@ return new class extends Migration
             $table->text('cancel_reason')->nullable();
             $table->timestamps();
             $table->integer('backup_year');
-            $table->timestamp('backed_up_at');
+            $table->timestamp('backed_up_at')->useCurrent();
 
             $table->index('shipment_id');
             $table->index('backup_year');

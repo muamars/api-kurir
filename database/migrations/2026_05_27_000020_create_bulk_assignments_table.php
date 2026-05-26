@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('bulk_assignments', function (Blueprint $table) {
@@ -20,15 +17,12 @@ return new class extends Migration
             $table->json('shipment_ids');
             $table->timestamp('assigned_at');
             $table->timestamps();
-            
+
             $table->index(['admin_id', 'assigned_at']);
             $table->index(['driver_id', 'assigned_at']);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('bulk_assignments');

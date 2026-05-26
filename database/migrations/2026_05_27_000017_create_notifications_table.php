@@ -11,10 +11,10 @@ return new class extends Migration
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('type'); // shipment_created, shipment_approved, shipment_assigned, etc.
+            $table->string('type');
             $table->string('title');
             $table->text('message');
-            $table->json('data')->nullable(); // Additional data like shipment_id, etc.
+            $table->json('data')->nullable();
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
 
