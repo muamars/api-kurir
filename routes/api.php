@@ -93,6 +93,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/reschedule', [ShipmentController::class, 'reschedule']);
         Route::patch('/shipments/{shipment}/deadline', [ShipmentController::class, 'updateDeadline']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
+        Route::post('/shipments/{shipment}/takeover', [ShipmentController::class, 'takeover']);
 
         // Driver actions
         Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);

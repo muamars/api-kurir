@@ -483,9 +483,9 @@ class ShipmentController extends Controller
     {
         $this->authorize('assign-drivers');
 
-        if (! in_array($shipment->status, ['pending'])) {
+        if (! in_array($shipment->status, ['pending', 'assigned'])) {
             return response()->json([
-                'message' => 'Only pending shipments can be set to pending',
+                'message' => 'Only pending or assigned shipments can be set to pending',
             ], 400);
         }
 
@@ -605,9 +605,9 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if (! in_array($shipment->status, ['pending'])) {
+        if (! in_array($shipment->status, ['pending', 'assigned'])) {
             return response()->json([
-                'message' => 'Only pending shipments can be cancelled',
+                'message' => 'Only pending or assigned shipments can be cancelled',
             ], 400);
         }
 
@@ -626,6 +626,31 @@ class ShipmentController extends Controller
 
         return response()->json([
             'message' => 'Shipment cancelled successfully',
+            'data' => $shipment->fresh(['creator', 'driver']),
+        ]);
+    }
+
+    public function takeover(Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        if ($shipment->status !== 'assigned') {
+            return response()->json([
+                'message' => 'Only assigned shipments can be taken over',
+            ], 400);
+        }
+
+        $shipment->update([
+            'status' => 'pending',
+            'assigned_driver_id' => null,
+            'approved_by' => null,
+            'approved_at' => null,
+        ]);
+
+        app(\App\Services\NotificationService::class)->shipmentPending($shipment->fresh(['creator']));
+
+        return response()->json([
+            'message' => 'Shipment taken over and reset to pending',
             'data' => $shipment->fresh(['creator', 'driver']),
         ]);
     }
