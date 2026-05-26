@@ -36,26 +36,32 @@ class Shipment extends Model
         'courier_notes',
         'priority',
         'deadline',
+        'deadline_locked',
         'scheduled_delivery_datetime',
         'surat_pengantar_kerja',
+        'attachment_path',
         'cancelled_by',
         'cancelled_at',
         'cancel_reason',
         'shipping_cost',
         'vehicle_used',
+        'online_tracking_url',
         'completion_photo',
         'completed_at',
         'completed_by',
-        'deadline_locked',
-        'online_tracking_url',
+        'is_archived',
+        'archived_at',
     ];
 
     protected $casts = [
-        'approved_at' => 'datetime',
-        'deadline' => 'datetime',
+        'approved_at'                 => 'datetime',
+        'deadline'                    => 'datetime',
         'scheduled_delivery_datetime' => 'datetime',
-        'completed_at' => 'datetime',
-        'cancelled_at' => 'datetime',
+        'completed_at'                => 'datetime',
+        'cancelled_at'                => 'datetime',
+        'archived_at'                 => 'datetime',
+        'deadline_locked'             => 'boolean',
+        'is_archived'                 => 'boolean',
     ];
 
     /**
@@ -113,6 +119,12 @@ class Shipment extends Model
     public function vehicleType(): BelongsTo
     {
         return $this->belongsTo(VehicleType::class, 'vehicle_type_id');
+    }
+
+    // Hanya shipment aktif (belum diarsip)
+    public function scopeActive($query)
+    {
+        return $query->where('is_archived', false);
     }
 
     public function scopeUrgent($query)

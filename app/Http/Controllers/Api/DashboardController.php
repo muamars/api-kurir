@@ -9,6 +9,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -32,27 +33,42 @@ class DashboardController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $user      = $request->user();
+        $cacheKey  = "dashboard.index.{$user->id}";
 
-        // ✅ PRIVATE DASHBOARD: Setiap user melihat data mereka sendiri
-        $stats = [
-            'shipments' => $this->getPrivateShipmentStats($user),
-            'deliveries' => $this->getPrivateDeliveryStats($user),
-            'performance' => $this->getPrivatePerformanceStats($user),
-        ];
+        $stats = Cache::remember($cacheKey, 120, function () use ($user) {
+            $data = [
+                'shipments'   => $this->getPrivateShipmentStats($user),
+                'deliveries'  => $this->getPrivateDeliveryStats($user),
+                'performance' => $this->getPrivatePerformanceStats($user),
+            ];
 
-        // Role-specific data - tetap private untuk masing-masing user
-        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
-            $stats['admin'] = $this->getAdminStats();
-        } elseif ($user->hasRole('Kurir')) {
-            $stats['driver'] = $this->getDriverStats($user);
-        } else {
-            $stats['user'] = $this->getUserStats($user);
+            if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
+                $data['admin'] = $this->getAdminStats();
+            } elseif ($user->hasRole('Kurir')) {
+                $data['driver'] = $this->getDriverStats($user);
+            } else {
+                $data['user'] = $this->getUserStats($user);
+            }
+
+            return $data;
+        });
+
+        return response()->json(['data' => $stats]);
+    }
+
+    /**
+     * Hapus cache dashboard untuk user tertentu.
+     * Dipanggil setiap ada perubahan status shipment.
+     */
+    public static function invalidateFor(array $userIds): void
+    {
+        foreach (array_unique(array_filter($userIds)) as $id) {
+            Cache::forget("dashboard.index.{$id}");
+            foreach (['week', 'month', 'year'] as $period) {
+                Cache::forget("dashboard.chart.{$id}.{$period}");
+            }
         }
-
-        return response()->json([
-            'data' => $stats,
-        ]);
     }
 
     private function getPrivateShipmentStats($user): array
@@ -166,7 +182,7 @@ class DashboardController extends Controller
 
         return [
             'assigned_today' => Shipment::where('assigned_driver_id', $user->id)
-                ->whereDate('created_at', $today)->count(),
+                ->whereDate('approved_at', $today)->count(),
             'in_progress' => Shipment::where('assigned_driver_id', $user->id)
                 ->where('status', 'in_progress')->count(),
             'completed_today' => Shipment::where('assigned_driver_id', $user->id)
@@ -198,26 +214,21 @@ class DashboardController extends Controller
 
     public function getChartData(Request $request): JsonResponse
     {
-        $period = $request->get('period', 'week'); // week, month, year
-        $user = $request->user();
+        $period   = $request->get('period', 'week'); // week, month, year
+        $user     = $request->user();
+        $cacheKey = "dashboard.chart.{$user->id}.{$period}";
+        $ttl      = 300; // 5 menit — chart mingguan/bulanan jarang berubah drastis
 
-        $data = [];
+        $data = Cache::remember($cacheKey, $ttl, function () use ($period, $user) {
+            return match ($period) {
+                'week'  => $this->getWeeklyChartData($user),
+                'month' => $this->getMonthlyChartData($user),
+                'year'  => $this->getYearlyChartData($user),
+                default => [],
+            };
+        });
 
-        switch ($period) {
-            case 'week':
-                $data = $this->getWeeklyChartData($user);
-                break;
-            case 'month':
-                $data = $this->getMonthlyChartData($user);
-                break;
-            case 'year':
-                $data = $this->getYearlyChartData($user);
-                break;
-        }
-
-        return response()->json([
-            'data' => $data,
-        ]);
+        return response()->json(['data' => $data]);
     }
 
     private function getWeeklyChartData($user): array
@@ -324,16 +335,27 @@ class DashboardController extends Controller
     public function getShipmentChartData(Request $request): JsonResponse
     {
         $request->validate([
-            'chart_type' => 'required|in:daily,monthly,yearly,category,vehicle_type,customer,status,priority,total',
-            'date_from' => 'nullable|date',
-            'date_to' => 'nullable|date|after_or_equal:date_from',
-            'period' => 'nullable|in:day,week,month,year',
-            'category_id' => 'nullable|exists:shipment_categories,id',
+            'chart_type'      => 'required|in:daily,monthly,yearly,category,vehicle_type,customer,status,priority,total',
+            'date_from'       => 'nullable|date',
+            'date_to'         => 'nullable|date|after_or_equal:date_from',
+            'period'          => 'nullable|in:day,week,month,year',
+            'category_id'     => 'nullable|exists:shipment_categories,id',
             'vehicle_type_id' => 'nullable|exists:vehicle_types,id',
         ]);
 
-        $user = $request->user();
+        $user      = $request->user();
         $chartType = $request->chart_type;
+
+        // Cache analytics — admin 15 menit, user/kurir 5 menit
+        $ttl      = $user->hasAnyRole(['Admin', 'Super Admin']) ? 900 : 300;
+        $cacheKey = 'dashboard.shipment_chart.' . $user->id . '.' . md5(json_encode($request->only([
+            'chart_type', 'date_from', 'date_to', 'period', 'category_id', 'vehicle_type_id',
+        ])));
+
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return response()->json($cached);
+        }
 
         // ✅ PRIVATE DASHBOARD: Base query berbeda berdasarkan role user
         $query = Shipment::with(['category', 'vehicleType', 'creator.division']);
@@ -392,22 +414,28 @@ class DashboardController extends Controller
                 break;
         }
 
-        return response()->json([
+        $response = [
             'data' => $data,
             'meta' => [
-                'chart_type' => $chartType,
-                'period' => $request->period ?? 'custom',
-                'date_range' => [
+                'chart_type'      => $chartType,
+                'period'          => $request->period ?? 'custom',
+                'date_range'      => [
                     'from' => $request->date_from ?? 'All time',
-                    'to' => $request->date_to ?? 'All time',
+                    'to'   => $request->date_to   ?? 'All time',
                 ],
                 'filters_applied' => [
-                    'category_id' => $request->category_id,
+                    'category_id'     => $request->category_id,
                     'vehicle_type_id' => $request->vehicle_type_id,
                 ],
-                'user_scope' => $user->hasAnyRole(['Admin', 'Super Admin']) ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
+                'user_scope' => $user->hasAnyRole(['Admin', 'Super Admin'])
+                    ? 'all_data'
+                    : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
             ],
-        ]);
+        ];
+
+        Cache::put($cacheKey, $response, $ttl);
+
+        return response()->json($response);
     }
 
     private function applyDateFilter($query, $request): void

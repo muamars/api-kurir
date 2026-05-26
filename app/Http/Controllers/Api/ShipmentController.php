@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CompleteShipmentRequest;
 use App\Http\Requests\StoreShipmentRequest;
@@ -242,12 +243,13 @@ class ShipmentController extends Controller
             'approved_at' => now(),
         ]);
 
-        // Send notification
-        app(NotificationService::class)->shipmentAssigned($shipment->fresh(['creator', 'approver', 'driver']));
+        $shipment->load(['creator', 'approver', 'driver']);
+        app(NotificationService::class)->shipmentAssigned($shipment);
+        DashboardController::invalidateFor([$shipment->created_by, $request->driver_id, auth()->id()]);
 
         return response()->json([
             'message' => 'Shipment approved and driver assigned successfully',
-            'data' => $shipment->fresh(['creator', 'approver', 'driver']),
+            'data'    => $shipment,
         ]);
     }
 
@@ -315,40 +317,54 @@ class ShipmentController extends Controller
                 ], 400);
             }
 
-            $updatedCount = 0;
-            foreach ($shipments as $shipment) {
-                $shipment->update([
-                    'assigned_driver_id' => $request->driver_id,
-                    'vehicle_type_id' => $request->vehicle_type_id,
-                    'status' => 'assigned',
-                    'approved_by' => auth()->id(),
-                    'approved_at' => now(),
-                ]);
+            $updatedCount = $shipments->count();
+            $approvedBy   = auth()->id();
+            $now          = now();
 
-                // Send notification for each shipment
-                app(NotificationService::class)->shipmentAssigned($shipment->fresh(['creator', 'approver', 'driver', 'vehicleType']));
-                $updatedCount++;
-            }
+            // Satu UPDATE massal, tidak N×UPDATE
+            Shipment::whereIn('id', $shipments->pluck('id'))
+                ->update([
+                    'assigned_driver_id' => $request->driver_id,
+                    'vehicle_type_id'    => $request->vehicle_type_id,
+                    'status'             => 'assigned',
+                    'approved_by'        => $approvedBy,
+                    'approved_at'        => $now,
+                    'updated_at'         => $now,
+                ]);
 
             DB::commit();
 
+            // Re-fetch from DB so assigned_driver_id is fresh (mass UPDATE leaves in-memory collection stale)
+            $shipmentIds = $shipments->pluck('id');
+            $shipments = Shipment::whereIn('id', $shipmentIds)
+                ->with(['creator', 'approver', 'driver', 'vehicleType', 'destinations', 'items'])
+                ->get();
+
+            // Kirim notifikasi setelah commit
+            foreach ($shipments as $shipment) {
+                app(NotificationService::class)->shipmentAssigned($shipment);
+            }
+
+            // Invalidate cache dashboard admin + driver yang ditugaskan
+            DashboardController::invalidateFor([$approvedBy, $request->driver_id]);
+
             // Create bulk assignment record for tracking
             $bulkAssignment = \DB::table('bulk_assignments')->insertGetId([
-                'admin_id' => auth()->id(),
-                'driver_id' => $request->driver_id,
-                'vehicle_type_id' => $request->vehicle_type_id,
+                'admin_id'       => $approvedBy,
+                'driver_id'      => $request->driver_id,
+                'vehicle_type_id'=> $request->vehicle_type_id,
                 'shipment_count' => $updatedCount,
-                'shipment_ids' => json_encode($request->shipment_ids),
-                'assigned_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
+                'shipment_ids'   => json_encode($request->shipment_ids),
+                'assigned_at'    => $now,
+                'created_at'     => $now,
+                'updated_at'     => $now,
             ]);
 
             return response()->json([
-                'message' => "{$updatedCount} shipments assigned to driver successfully",
-                'assigned_count' => $updatedCount,
-                'bulk_assignment_id' => $bulkAssignment,
-                'shipments' => ShipmentResource::collection($shipments->load(['creator', 'driver', 'vehicleType', 'destinations', 'items'])),
+                'message'           => "{$updatedCount} shipments assigned to driver successfully",
+                'assigned_count'    => $updatedCount,
+                'bulk_assignment_id'=> $bulkAssignment,
+                'shipments'         => ShipmentResource::collection($shipments),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -640,6 +656,8 @@ class ShipmentController extends Controller
             ], 400);
         }
 
+        $previousDriverId = $shipment->assigned_driver_id;
+
         $shipment->update([
             'status' => 'pending',
             'assigned_driver_id' => null,
@@ -647,7 +665,13 @@ class ShipmentController extends Controller
             'approved_at' => null,
         ]);
 
-        app(\App\Services\NotificationService::class)->shipmentPending($shipment->fresh(['creator']));
+        $fresh = $shipment->fresh(['creator']);
+        app(\App\Services\NotificationService::class)->shipmentPending($fresh);
+
+        // Notify the driver who lost the assignment
+        if ($previousDriverId) {
+            app(\App\Services\NotificationService::class)->shipmentAdminTakeover($fresh, $previousDriverId);
+        }
 
         return response()->json([
             'message' => 'Shipment taken over and reset to pending',
@@ -987,32 +1011,30 @@ class ShipmentController extends Controller
                 $completionPhotoPath = $photo->storeAs('completion_photos', $filename, 'public');
             }
 
+            // Pre-load destinations sekali untuk semua shipments (hindari N+1)
+            $shipments->load(['destinations', 'creator', 'driver', 'items']);
+
+            $completedAt    = now();
+            $completedBy    = auth()->id();
             $completedCount = 0;
-            $completedShipments = [];
 
             foreach ($shipments as $shipment) {
-                // Update shipment with completion data
                 $shipment->update([
-                    'status' => 'completed',
-                    'shipping_cost' => $request->shipping_cost,
-                    'vehicle_used' => $request->vehicle_used,
+                    'status'              => 'completed',
+                    'shipping_cost'       => $request->shipping_cost,
+                    'vehicle_used'        => $request->vehicle_used,
                     'online_tracking_url' => $request->online_tracking_url,
-                    'completion_photo' => $completionPhotoPath,
-                    'completed_at' => now(),
-                    'completed_by' => auth()->id(),
+                    'completion_photo'    => $completionPhotoPath,
+                    'completed_at'        => $completedAt,
+                    'completed_by'        => $completedBy,
                 ]);
 
-                // Update each destination individually so the Observer fires
-                // and creates DestinationStatusHistory records for timing analytics
-                $shipment->load('destinations');
-                $completedAt = now();
-
+                // Update destinations yang belum finished (Observer tetap terpanggil)
+                $driverId = $shipment->assigned_driver_id ?? $completedBy;
                 foreach ($shipment->destinations as $destination) {
                     if ($destination->status !== 'finished') {
-                        $destination->update(['status' => 'finished']); // Observer records history
+                        $destination->update(['status' => 'finished']);
 
-                        // Create ShipmentProgress record for timing analytics
-                        $driverId = $shipment->assigned_driver_id ?? auth()->id();
                         ShipmentProgress::create([
                             'shipment_id'    => $shipment->id,
                             'destination_id' => $destination->id,
@@ -1024,14 +1046,21 @@ class ShipmentController extends Controller
                     }
                 }
 
-                // Send notification
-                app(NotificationService::class)->shipmentCompleted($shipment->fresh(['creator', 'driver']));
-                
                 $completedCount++;
-                $completedShipments[] = $shipment->fresh(['creator', 'driver', 'destinations', 'items']);
             }
 
             DB::commit();
+
+            // Kirim notifikasi dan invalidate cache setelah commit
+            $affectedUserIds = [$completedBy];
+            foreach ($shipments as $shipment) {
+                app(NotificationService::class)->shipmentCompleted($shipment);
+                $affectedUserIds[] = $shipment->created_by;
+                $affectedUserIds[] = $shipment->assigned_driver_id;
+            }
+            DashboardController::invalidateFor($affectedUserIds);
+
+            $completedShipments = $shipments;
 
             return response()->json([
                 'message' => "{$completedCount} shipments completed successfully",
