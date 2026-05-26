@@ -17,10 +17,14 @@ class ShipmentResource extends JsonResource
         return [
             'id' => $this->id,
             'shipment_id' => $this->shipment_id,
+            'category_id' => $this->category_id,
+            'division_id' => $this->division_id,
+            'tugas_pengiriman_id' => $this->tugas_pengiriman_id,
             'status' => $this->status,
             'priority' => $this->priority,
             'notes' => $this->notes,
             'deadline' => $this->deadline?->format('Y-m-d H:i:s'),
+            'deadline_locked' => (bool) $this->deadline_locked,
             'scheduled_delivery_datetime' => $this->scheduled_delivery_datetime
             ? $this->scheduled_delivery_datetime->format('Y-m-d H:i:s')
             : null,
@@ -81,6 +85,10 @@ class ShipmentResource extends JsonResource
                 ];
             }),
 
+            'online_tracking_url' => $this->online_tracking_url,
+            'shipping_cost' => $this->shipping_cost,
+            'vehicle_used' => $this->vehicle_used,
+            'completed_at' => $this->completed_at?->format('Y-m-d H:i:s'),
             'cancel_reason' => $this->cancel_reason,
             'cancelled_at' => $this->cancelled_at?->format('Y-m-d H:i:s'),
             'cancelled_by' => $this->when($this->cancelledBy, [

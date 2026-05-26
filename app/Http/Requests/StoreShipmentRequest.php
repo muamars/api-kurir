@@ -38,6 +38,8 @@ class StoreShipmentRequest extends FormRequest
                     }
                 },
             ],
+            'division_id'          => 'nullable|exists:divisions,id',
+            'tugas_pengiriman_id'  => 'nullable|exists:tugas_pengiriman,id',
             'notes' => 'nullable|string',
             'courier_notes' => 'nullable|string',
             'priority' => 'nullable|in:regular,urgent',

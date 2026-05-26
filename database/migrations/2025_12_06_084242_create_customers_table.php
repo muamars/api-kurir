@@ -19,7 +19,6 @@ return new class extends Migration
             $table->text('address');
             $table->boolean('is_active')->default(true);
             $table->timestamps();
-
             $table->index('company_name');
             $table->index('is_active');
         });

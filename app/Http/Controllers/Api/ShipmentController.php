@@ -136,11 +136,20 @@ class ShipmentController extends Controller
         try {
             DB::beginTransaction();
 
+            // Acquire advisory lock INSIDE the transaction so it's held
+            // until commit/rollback — prevents concurrent reads of the same sequence
+            $year = date('Y');
+            DB::statement("SELECT GET_LOCK('spj_seq_{$year}', 10)");
+
+            $shipmentId = $this->generateShipmentId();
+
             $shipmentData = [
-                'shipment_id' => 'SPJ-'.date('Ymd').'-'.Str::random(6),
+                'shipment_id' => $shipmentId,
                 'created_by' => auth()->id(),
-                'category_id' => $request->category_id,
-                'vehicle_type_id' => $request->vehicle_type_id,
+                'category_id'         => $request->category_id,
+                'division_id'         => $request->division_id,
+                'tugas_pengiriman_id' => $request->tugas_pengiriman_id,
+                'vehicle_type_id'     => $request->vehicle_type_id,
                 'status' => 'pending', // ✅ FIXED: Use valid status from enum
                 'notes' => $request->notes,
                 'courier_notes' => $request->courier_notes,
@@ -174,6 +183,7 @@ class ShipmentController extends Controller
             }
 
             DB::commit();
+            DB::statement("SELECT RELEASE_LOCK('spj_seq_{$year}')");
 
             // Send notification for shipment created
             $shipment->load(['creator', 'destinations', 'items', 'category', 'vehicleType']);
@@ -185,6 +195,7 @@ class ShipmentController extends Controller
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
+            DB::statement("SELECT RELEASE_LOCK('spj_seq_" . date('Y') . "')");
 
             return response()->json([
                 'message' => 'Failed to create shipment',
@@ -446,6 +457,9 @@ class ShipmentController extends Controller
                 'id' => $shipment->id,
                 'shipment_id' => $shipment->shipment_id,
                 'current_status' => $shipment->status,
+                'deadline' => $shipment->deadline?->format('Y-m-d H:i:s'),
+                'scheduled_delivery_datetime' => $shipment->scheduled_delivery_datetime?->format('Y-m-d H:i:s'),
+                'deadline_locked' => (bool) $shipment->deadline_locked,
                 'creator' => $shipment->creator->name,
                 'category' => $shipment->category ? [
                     'id' => $shipment->category->id,
@@ -490,6 +504,58 @@ class ShipmentController extends Controller
         return response()->json([
             'message' => 'Shipment set to pending successfully',
             'data' => $shipment->fresh(['creator']),
+        ]);
+    }
+
+    public function reschedule(Shipment $shipment): JsonResponse
+    {
+        if (! in_array($shipment->status, ['pending'])) {
+            return response()->json([
+                'message' => 'Hanya shipment berstatus pending yang bisa di-reschedule',
+            ], 400);
+        }
+
+        $shipment->update(['deadline_locked' => false]);
+
+        return response()->json([
+            'message' => 'Shipment dibuka untuk reschedule. User dapat mengubah deadline.',
+            'data' => new ShipmentResource($shipment->fresh(['creator', 'destinations', 'items', 'category', 'vehicleType'])),
+        ]);
+    }
+
+    public function updateDeadline(Request $request, Shipment $shipment): JsonResponse
+    {
+        // Hanya creator shipment yang bisa update deadline
+        if ($shipment->created_by !== auth()->id()) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        if ($shipment->deadline_locked) {
+            return response()->json([
+                'message' => 'Deadline masih terkunci. Admin harus membuka reschedule terlebih dahulu.',
+            ], 403);
+        }
+
+        if ($shipment->status !== 'pending') {
+            return response()->json([
+                'message' => 'Hanya shipment berstatus pending yang bisa diubah deadlinenya.',
+            ], 400);
+        }
+
+        $request->validate([
+            'deadline'                     => 'required|date_format:Y-m-d H:i:s',
+            'scheduled_delivery_datetime'  => 'nullable|date_format:Y-m-d H:i:s',
+        ]);
+
+        $shipment->update([
+            'deadline'                    => $request->deadline,
+            'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime ?? $request->deadline,
+            'deadline_locked'             => true, // kunci kembali setelah user simpan
+        ]);
+
+        return response()->json([
+            'message' => 'Deadline berhasil diperbarui.',
+            'data' => new ShipmentResource($shipment->fresh(['creator', 'destinations', 'items', 'category', 'vehicleType'])),
         ]);
     }
 
@@ -905,6 +971,7 @@ class ShipmentController extends Controller
                     'status' => 'completed',
                     'shipping_cost' => $request->shipping_cost,
                     'vehicle_used' => $request->vehicle_used,
+                    'online_tracking_url' => $request->online_tracking_url,
                     'completion_photo' => $completionPhotoPath,
                     'completed_at' => now(),
                     'completed_by' => auth()->id(),
@@ -1196,5 +1263,23 @@ class ShipmentController extends Controller
             default:
                 return ucfirst($status);
         }
+    }
+
+    private function generateShipmentId(): string
+    {
+        $year = date('Y');
+        $date = date('Ymd');
+
+        // Must be called inside an active transaction with GET_LOCK already acquired.
+        // Filter only the new sequential format (SPJ-YYYYMMDD-NNNNN) to avoid
+        // old random-suffix entries (SPJ-YYYYMMDD-xXxXxX) corrupting the sequence.
+        $last = Shipment::where('shipment_id', 'REGEXP', "^SPJ-{$year}[0-9]{4}-[0-9]{5}$")
+            ->orderByDesc('shipment_id')
+            ->lockForUpdate()
+            ->value('shipment_id');
+
+        $nextSeq = $last ? (int) substr($last, -5) + 1 : 1;
+
+        return sprintf('SPJ-%s-%05d', $date, $nextSeq);
     }
 }

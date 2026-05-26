@@ -19,6 +19,7 @@ class StoreCustomerRequest extends FormRequest
             'phone' => 'required|string|max:20',
             'address' => 'required|string',
             'is_active' => 'boolean',
+            'category' => 'sometimes|in:customer,supplier',
         ];
     }
 }

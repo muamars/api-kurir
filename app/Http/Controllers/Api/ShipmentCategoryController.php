@@ -82,4 +82,15 @@ class ShipmentCategoryController extends Controller
             'message' => 'Category deleted successfully',
         ]);
     }
+
+    public function toggleActive(ShipmentCategory $shipmentCategory)
+    {
+        $shipmentCategory->is_active = ! $shipmentCategory->is_active;
+        $shipmentCategory->save();
+
+        return response()->json([
+            'message' => 'Status berhasil diubah',
+            'data'    => $shipmentCategory,
+        ]);
+    }
 }

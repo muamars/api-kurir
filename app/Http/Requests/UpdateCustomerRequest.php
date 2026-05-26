@@ -19,6 +19,7 @@ class UpdateCustomerRequest extends FormRequest
             'phone' => 'sometimes|string|max:20',
             'address' => 'sometimes|string',
             'is_active' => 'boolean',
+            'category' => 'sometimes|in:customer,supplier',
         ];
     }
 }

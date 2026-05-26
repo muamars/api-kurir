@@ -27,6 +27,7 @@ class CompleteShipmentRequest extends FormRequest
             'shipping_cost' => 'required|integer|min:0',
             'vehicle_used' => 'required|string|max:255',
             'completion_photo' => 'nullable|image|mimes:jpeg,png,jpg|max:5120', // 5MB max
+            'online_tracking_url' => 'nullable|url|max:2048',
         ];
     }
 

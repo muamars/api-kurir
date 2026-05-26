@@ -16,6 +16,7 @@ class Customer extends Model
         'phone',
         'address',
         'is_active',
+        'category',
     ];
 
     protected $casts = [

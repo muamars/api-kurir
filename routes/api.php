@@ -90,6 +90,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
         Route::post('/shipments/{shipment}/pending', [ShipmentController::class, 'pending']);
+        Route::post('/shipments/{shipment}/reschedule', [ShipmentController::class, 'reschedule']);
+        Route::patch('/shipments/{shipment}/deadline', [ShipmentController::class, 'updateDeadline']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
 
         // Driver actions
@@ -158,6 +160,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Shipment Categories (all users can view)
         Route::get('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'index']);
         Route::get('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'show']);
+
+        // Shipment Categories CRUD (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
+            Route::post('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'store']);
+            Route::put('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'update']);
+            Route::delete('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'destroy']);
+            Route::patch('/shipment-categories/{shipmentCategory}/toggle', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'toggleActive']);
+        });
+
+        // Tugas Pengiriman (all users can view)
+        Route::get('/tugas-pengiriman', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'index']);
+        Route::get('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'show']);
+
+        // Tugas Pengiriman CRUD (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
+            Route::post('/tugas-pengiriman', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'store']);
+            Route::put('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'update']);
+            Route::delete('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'destroy']);
+            Route::patch('/tugas-pengiriman/{tugasPengiriman}/toggle', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'toggleActive']);
+        });
 
         // Vehicle Types (all users can view)
         Route::get('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'index']);

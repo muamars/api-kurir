@@ -27,6 +27,8 @@ class Shipment extends Model
         'approved_by',
         'assigned_driver_id',
         'category_id',
+        'division_id',
+        'tugas_pengiriman_id',
         'vehicle_type_id',
         'approved_at',
         'status',
@@ -44,6 +46,8 @@ class Shipment extends Model
         'completion_photo',
         'completed_at',
         'completed_by',
+        'deadline_locked',
+        'online_tracking_url',
     ];
 
     protected $casts = [
