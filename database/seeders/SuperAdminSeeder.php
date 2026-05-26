@@ -19,9 +19,12 @@ class SuperAdminSeeder extends Seeder
             [
                 'name'      => 'Super Admin',
                 'password'  => Hash::make('superadmin123'),
+                'division_id' => $kurirDivision->id ?? 1,
                 'phone'     => '081200000000',
                 'is_active' => true,
             ]
+
+           
         );
 
         // Assign role Super Admin (tidak duplikat jika sudah ada)
