@@ -11,7 +11,7 @@ class StoreUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return auth()->user()->can('manage-users');
+        return auth()->user()->hasAnyRole(['Admin', 'Super Admin']);
     }
 
     /**
@@ -24,7 +24,7 @@ class StoreUserRequest extends FormRequest
         return [
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => 'required|string|min:6|confirmed',
             'phone' => 'nullable|string|max:20',
             'division_id' => 'nullable|exists:divisions,id',
             'is_active' => 'boolean',
