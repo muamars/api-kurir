@@ -1524,4 +1524,201 @@ class DashboardController extends Controller
             ],
         ]);
     }
+
+    public function dashboardDelivery(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->hasRole('Kurir')) {
+            return response()->json(['message' => 'Endpoint ini hanya untuk kurir'], 403);
+        }
+
+        $idleResponse = [
+            'data' => [
+                'mode' => 'idle',
+                'message' => 'Belum tersedia',
+                'subtitle' => 'Bersiap mengirim kiriman',
+                'bulk_assignment_id' => null,
+                'total_shipments' => 0,
+                'total_steps' => 0,
+                'completed_steps' => 0,
+                'progress_percent' => 0,
+                'shipments' => [],
+            ],
+        ];
+
+        $allBulks = DB::table('bulk_assignments')
+            ->where('driver_id', $user->id)
+            ->orderByDesc('assigned_at')
+            ->get();
+
+        if ($allBulks->isEmpty()) {
+            return response()->json($idleResponse);
+        }
+
+        $activeBulk = null;
+
+        foreach ($allBulks as $bulk) {
+            $shipmentIds = json_decode($bulk->shipment_ids, true) ?? [];
+            if (empty($shipmentIds)) continue;
+
+            $hasInProgress = Shipment::whereIn('id', $shipmentIds)
+                ->where('assigned_driver_id', $user->id)
+                ->where('status', 'in_progress')
+                ->exists();
+
+            if ($hasInProgress) {
+                $activeBulk = $bulk;
+                break;
+            }
+        }
+
+        if (!$activeBulk) {
+            foreach ($allBulks as $bulk) {
+                $shipmentIds = json_decode($bulk->shipment_ids, true) ?? [];
+                if (empty($shipmentIds)) continue;
+
+                $hasAssigned = Shipment::whereIn('id', $shipmentIds)
+                    ->where('assigned_driver_id', $user->id)
+                    ->where('status', 'assigned')
+                    ->exists();
+
+                if ($hasAssigned) {
+                    $activeBulk = $bulk;
+                    break;
+                }
+            }
+        }
+
+        if (!$activeBulk) {
+            $latestBulk = $allBulks->first();
+            $shipmentIds = json_decode($latestBulk->shipment_ids, true) ?? [];
+
+            $allDone = Shipment::whereIn('id', $shipmentIds)
+                ->where('assigned_driver_id', $user->id)
+                ->whereNotIn('status', ['completed', 'cancelled'])
+                ->doesntExist();
+
+            if ($allDone) {
+                $activeBulk = $latestBulk;
+            }
+        }
+
+        if (!$activeBulk) {
+            return response()->json($idleResponse);
+        }
+
+        $shipmentIds = json_decode($activeBulk->shipment_ids, true) ?? [];
+
+        $shipments = Shipment::with(['destinations' => fn($q) => $q->orderBy('sequence_order')])
+            ->whereIn('id', $shipmentIds)
+            ->where('assigned_driver_id', $user->id)
+            ->get();
+
+        $orderedShipments = collect();
+        foreach ($shipmentIds as $id) {
+            $s = $shipments->firstWhere('id', $id);
+            if ($s) $orderedShipments->push($s);
+        }
+
+        if ($orderedShipments->isEmpty()) {
+            return response()->json($idleResponse);
+        }
+
+        $shipmentsData = [];
+        $totalSteps = 0;
+        $completedSteps = 0;
+
+        foreach ($orderedShipments as $shipment) {
+            foreach ($shipment->destinations as $dest) {
+                $totalSteps += 2;
+
+                $dikirimDone = in_array($dest->status, ['in_progress', 'arrived', 'delivered', 'returning', 'finished']);
+                $diterimaDone = in_array($dest->status, ['delivered', 'returning', 'finished']);
+
+                if ($dikirimDone) $completedSteps++;
+                if ($diterimaDone) $completedSteps++;
+
+                $shipmentsData[] = [
+                    'shipment_id' => $shipment->shipment_id,
+                    'destination_id' => $dest->id,
+                    'receiver_name' => $dest->receiver_name,
+                    'delivery_address' => $dest->delivery_address,
+                    'sequence_order' => $dest->sequence_order,
+                    'status' => $dest->status,
+                    'dikirim' => $dikirimDone,
+                    'diterima' => $diterimaDone,
+                ];
+            }
+        }
+
+        $progressPercent = $totalSteps > 0 ? round(($completedSteps / $totalSteps) * 100) : 0;
+
+        $allCompleted = $orderedShipments->every(fn($s) => in_array($s->status, ['completed', 'cancelled']));
+        $anyInProgress = $orderedShipments->contains(fn($s) => $s->status === 'in_progress');
+
+        // Check if any destination has returning status (kurir sedang pulang)
+        $hasReturning = false;
+        $allFinishedOrCompleted = true;
+        foreach ($orderedShipments as $shipment) {
+            foreach ($shipment->destinations as $dest) {
+                if ($dest->status === 'returning') {
+                    $hasReturning = true;
+                }
+                if (!in_array($dest->status, ['finished', 'delivered', 'returning'])) {
+                    $allFinishedOrCompleted = false;
+                }
+            }
+        }
+
+        // Find the first destination not yet fully received (diterima)
+        // This walks in bulk order: shipment 1 dest 1, shipment 1 dest 2, shipment 2 dest 1, etc.
+        $currentShipmentNumber = 0;
+        $currentShipmentSPJ = null;
+        foreach ($orderedShipments->values() as $idx => $shipment) {
+            $hasUnfinishedDest = false;
+            foreach ($shipment->destinations as $dest) {
+                $diterimaDone = in_array($dest->status, ['delivered', 'returning', 'finished']);
+                if (!$diterimaDone) {
+                    $hasUnfinishedDest = true;
+                    break;
+                }
+            }
+            if ($hasUnfinishedDest) {
+                $currentShipmentNumber = $idx + 1;
+                $currentShipmentSPJ = $shipment->shipment_id;
+                break;
+            }
+        }
+
+        if ($allCompleted) {
+            $mode = 'completed';
+            $currentShipmentNumber = $orderedShipments->count();
+            $currentShipmentSPJ = $orderedShipments->last()?->shipment_id;
+        } elseif ($hasReturning && $allFinishedOrCompleted) {
+            $mode = 'returning';
+            $currentShipmentNumber = $orderedShipments->count();
+            $currentShipmentSPJ = null;
+        } elseif ($anyInProgress) {
+            $mode = 'delivering';
+        } else {
+            $mode = 'ready';
+            $currentShipmentNumber = 0;
+            $currentShipmentSPJ = null;
+        }
+
+        return response()->json([
+            'data' => [
+                'mode' => $mode,
+                'bulk_assignment_id' => $activeBulk->id,
+                'total_shipments' => $orderedShipments->count(),
+                'current_shipment_number' => $currentShipmentNumber,
+                'current_shipment_spj' => $currentShipmentSPJ,
+                'total_steps' => $totalSteps,
+                'completed_steps' => $completedSteps,
+                'progress_percent' => $progressPercent,
+                'shipments' => $shipmentsData,
+            ],
+        ]);
+    }
 }
