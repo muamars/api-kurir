@@ -14,12 +14,19 @@ class StoreCustomerRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'company_name' => 'required|string|max:255',
+            'company_name' => 'required|string|max:255|unique:customers,company_name',
             'customer_name' => 'required|string|max:255',
             'phone' => 'required|string|max:20',
             'address' => 'required|string',
             'is_active' => 'boolean',
             'category' => 'sometimes|in:customer,supplier',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'company_name.unique' => 'Nama perusahaan sudah terdaftar.',
         ];
     }
 }

@@ -28,7 +28,15 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $token = $user->createToken('api-token')->plainTextToken;
+        $tokenResult = $user->createToken('api-token');
+
+        if ($user->hasRole('Kurir')) {
+            $tokenResult->accessToken->update([
+                'expires_at' => now()->addHours(24),
+            ]);
+        }
+
+        $token = $tokenResult->plainTextToken;
 
         return response()->json([
             'message' => 'Login successful',
