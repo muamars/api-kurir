@@ -1455,38 +1455,49 @@ class ShipmentProgressController extends Controller
                 }
             }
             
-            // Rule B: Multi-package workflow - hanya untuk returning/finished
+            // Rule B: Multi-package workflow - returning/finished
+            // Izinkan jika SEMUA destination lain sudah delivered/returning/finished
             if (in_array($requestedStatus, ['returning', 'finished'])) {
+                $othersReady = $allDestinations->every(function ($dest) use ($destination) {
+                    if ($dest->id === $destination->id) return true;
+                    return in_array($dest->status, ['delivered', 'returning', 'finished']);
+                });
+
                 \Log::info('Checking returning/finished permission', [
-                    'is_last_package' => $isLastPackage,
+                    'others_ready' => $othersReady,
                     'current_package_index' => $currentPackageIndex,
                     'total_packages' => $totalPackages,
                 ]);
-                
-                if ($isLastPackage) {
+
+                if ($othersReady) {
                     return [
                         'allowed' => true,
-                        'message' => 'Allowed: This is the last package',
-                        'rule' => 'Rule B: Multi-package - last package can return',
+                        'message' => 'Allowed: All other packages are delivered',
+                        'rule' => 'Rule B: Multi-package - all others delivered',
                         'package_info' => [
                             'total_packages' => $totalPackages,
                             'current_package_position' => $currentPackageIndex + 1,
-                            'is_last_package' => true,
+                            'is_last_package' => $isLastPackage,
                         ],
-                        'explanation' => 'Ini adalah paket terakhir, boleh returning → finished'
+                        'explanation' => 'Semua paket lain sudah delivered/returning/finished, boleh returning → finished'
                     ];
                 } else {
+                    $unfinished = $allDestinations->filter(function ($dest) use ($destination) {
+                        return $dest->id !== $destination->id
+                            && !in_array($dest->status, ['delivered', 'returning', 'finished']);
+                    })->count();
+
                     return [
                         'allowed' => false,
                         'message' => 'Not allowed: You still have other packages to deliver',
-                        'rule' => 'Rule B: Multi-package - only last package can return',
+                        'rule' => 'Rule B: Multi-package - not all packages delivered',
                         'package_info' => [
                             'total_packages' => $totalPackages,
                             'current_package_position' => $currentPackageIndex + 1,
-                            'remaining_packages' => $totalPackages - ($currentPackageIndex + 1),
-                            'is_last_package' => false,
+                            'remaining_packages' => $unfinished,
+                            'is_last_package' => $isLastPackage,
                         ],
-                        'explanation' => 'Paket 1 & 2 mentok di delivered. Hanya paket terakhir yang bisa returning → finished'
+                        'explanation' => "Masih ada {$unfinished} paket yang belum delivered"
                     ];
                 }
             }
