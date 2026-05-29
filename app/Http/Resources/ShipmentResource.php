@@ -17,9 +17,9 @@ class ShipmentResource extends JsonResource
         return [
             'id' => $this->id,
             'shipment_id' => $this->shipment_id,
-            'category_id' => $this->category_id,
-            'division_id' => $this->division_id,
-            'tugas_pengiriman_id' => $this->tugas_pengiriman_id,
+            'category_id' => $this->category?->name,
+            'division_id' => $this->division?->name,
+            'tugas_pengiriman_id' => $this->tugasPengiriman?->tugas,
             'status' => $this->status,
             'priority' => $this->priority,
             'notes' => $this->notes,

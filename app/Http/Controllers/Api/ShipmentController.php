@@ -207,7 +207,7 @@ class ShipmentController extends Controller
 
     public function show(Shipment $shipment): JsonResponse
     {
-        $shipment->load(['creator', 'approver', 'driver', 'destinations', 'items', 'progress.driver', 'category', 'vehicleType']);
+        $shipment->load(['creator', 'approver', 'driver', 'destinations', 'items', 'progress.driver', 'category', 'vehicleType', 'division', 'tugasPengiriman']);
 
         return response()->json(new ShipmentResource($shipment));
     }

@@ -121,6 +121,16 @@ class Shipment extends Model
         return $this->belongsTo(VehicleType::class, 'vehicle_type_id');
     }
 
+    public function division(): BelongsTo
+    {
+        return $this->belongsTo(Division::class, 'division_id');
+    }
+
+    public function tugasPengiriman(): BelongsTo
+    {
+        return $this->belongsTo(TugasPengiriman::class, 'tugas_pengiriman_id');
+    }
+
     // Hanya shipment aktif (belum diarsip)
     public function scopeActive($query)
     {
