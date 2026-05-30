@@ -1368,4 +1368,171 @@ class ShipmentController extends Controller
 
         return sprintf('SPJ-%s-%05d', $date, $nextSeq);
     }
+
+    /**
+     * Get shipments that need supervisor review (reached takeover limit)
+     */
+    public function getNeedsReview(Request $request): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        $request->validate([
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'search' => 'nullable|string|max:255',
+            'sort_by' => 'nullable|in:created_at,last_takeover_at,takeover_count',
+            'sort_order' => 'nullable|in:asc,desc',
+        ]);
+
+        $perPage = $request->get('per_page', 15);
+        $sortBy = $request->get('sort_by', 'last_takeover_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+
+        $query = Shipment::with([
+            'creator:id,name,division_id',
+            'driver:id,name',
+            'destinations:id,shipment_id,receiver_name,delivery_address',
+            'category:id,name',
+        ])
+        ->where('needs_review', true)
+        ->orderBy($sortBy, $sortOrder);
+
+        // Search by shipment ID or receiver name
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('shipment_id', 'LIKE', "%{$search}%")
+                    ->orWhereHas('destinations', function ($destQ) use ($search) {
+                        $destQ->where('receiver_name', 'LIKE', "%{$search}%")
+                            ->orWhere('delivery_address', 'LIKE', "%{$search}%");
+                    });
+            });
+        }
+
+        $shipments = $query->paginate($perPage);
+
+        return response()->json([
+            'message' => 'Shipments needing supervisor review',
+            'data' => $shipments->items(),
+            'pagination' => [
+                'total' => $shipments->total(),
+                'per_page' => $shipments->perPage(),
+                'current_page' => $shipments->currentPage(),
+                'last_page' => $shipments->lastPage(),
+                'from' => $shipments->firstItem(),
+                'to' => $shipments->lastItem(),
+            ],
+        ]);
+    }
+
+    /**
+     * Reset takeover count for a shipment (supervisor action)
+     */
+    public function resetTakeoverCount(Request $request, Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        $request->validate([
+            'new_count' => 'required|integer|min:0|max:10',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $result = DB::transaction(function () use ($shipment, $request) {
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+
+            $oldCount = $locked->takeover_count;
+            $newCount = $request->new_count;
+
+            $locked->update([
+                'takeover_count' => $newCount,
+                'needs_review' => false,
+            ]);
+
+            return $locked;
+        });
+
+        return response()->json([
+            'message' => "Takeover count direset ke {$request->new_count}",
+            'data' => $result->fresh(['creator', 'driver', 'destinations']),
+        ]);
+    }
+
+    /**
+     * Approve supervisor review and allow reassignment
+     */
+    public function approveSupervisorReview(Request $request, Shipment $shipment): JsonResponse
+    {
+        $this->authorize('assign-drivers');
+
+        $request->validate([
+            'action' => 'required|in:reset_and_reassign,reset_only,cancel',
+            'new_driver_id' => 'required_if:action,reset_and_reassign|nullable|exists:users,id',
+            'reset_count' => 'nullable|integer|min:0|max:10',
+            'notes' => 'required|string|max:500',
+        ]);
+
+        $result = DB::transaction(function () use ($shipment, $request) {
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+
+            if (!$locked->needs_review) {
+                return ['error' => 'Shipment tidak memerlukan peninjauan', 'code' => 400];
+            }
+
+            $action = $request->action;
+            $oldStatus = $locked->status;
+            $oldDriver = $locked->assigned_driver_id;
+            $oldCount = $locked->takeover_count;
+
+            if ($action === 'reset_and_reassign') {
+                // Validasi driver adalah kurir aktif
+                $newDriver = \App\Models\User::findOrFail($request->new_driver_id);
+                if (!$newDriver->hasRole('Kurir') || !$newDriver->is_active) {
+                    return ['error' => 'Driver yang dipilih bukan kurir aktif', 'code' => 422];
+                }
+
+                $resetCount = $request->reset_count ?? 0;
+                $locked->update([
+                    'status' => 'assigned',
+                    'assigned_driver_id' => $newDriver->id,
+                    'takeover_count' => $resetCount,
+                    'needs_review' => false,
+                    'approved_by' => auth()->id(),
+                    'approved_at' => now(),
+                ]);
+
+                // Notify new driver
+                app(NotificationService::class)->shipmentAssigned($locked->fresh(['creator', 'driver']));
+
+            } elseif ($action === 'reset_only') {
+                $resetCount = $request->reset_count ?? 0;
+                $locked->update([
+                    'takeover_count' => $resetCount,
+                    'needs_review' => false,
+                ]);
+
+            } elseif ($action === 'cancel') {
+                $locked->update([
+                    'status' => 'cancelled',
+                    'cancelled_by' => auth()->id(),
+                    'cancelled_at' => now(),
+                    'cancel_reason' => "Dibatalkan oleh supervisor setelah review. Catatan: {$request->notes}",
+                    'needs_review' => false,
+                ]);
+
+                // Notify creator
+                app(NotificationService::class)->shipmentCancelled($locked->fresh(['creator', 'driver']));
+            }
+
+            return $locked;
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], $result['code']);
+        }
+
+        return response()->json([
+            'message' => "Pengiriman berhasil di-review oleh supervisor dengan aksi: {$request->action}",
+            'data' => $result->fresh(['creator', 'driver', 'destinations']),
+        ]);
+    }
 }

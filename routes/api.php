@@ -82,6 +82,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}/route-duration', [ShipmentProgressController::class, 'getAdminBulkAssignmentRouteDuration']);
+        Route::get('/shipments/needs-review', [ShipmentController::class, 'getNeedsReview']);
         
         Route::get('/shipments/{shipment}', [ShipmentController::class, 'show']);
         Route::put('/shipments/{shipment}', [ShipmentController::class, 'update']);
@@ -94,10 +95,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::patch('/shipments/{shipment}/deadline', [ShipmentController::class, 'updateDeadline']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
         Route::post('/shipments/{shipment}/takeover', [ShipmentController::class, 'takeover']);
+        Route::post('/shipments/{shipment}/reset-takeover-count', [ShipmentController::class, 'resetTakeoverCount']);
+        Route::post('/shipments/{shipment}/approve-supervisor-review', [ShipmentController::class, 'approveSupervisorReview']);
 
         // Driver actions
         Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);
-        
+
         // Driver bulk assignments (Kurir only)
         Route::get('/driver/bulk-assignments', [ShipmentController::class, 'getMyBulkAssignments']);
         Route::get('/driver/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getMyBulkAssignmentDetail']);
