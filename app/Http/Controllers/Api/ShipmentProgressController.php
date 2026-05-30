@@ -1605,25 +1605,23 @@ class ShipmentProgressController extends Controller
     private function updateBulkAssignmentStatusOnCompletion(Shipment $completedShipment, int $driverId): void
     {
         try {
-            // Find bulk assignment containing this shipment
-            $connection = DB::connection();
-            $driver = $connection->getDriverName();
-            
+            // Cari SEMUA bulk yang memuat shipment ini. Satu shipment bisa muncul di
+            // beberapa bulk assignment (mis. admin re-assign), dan tiap bulk wajib
+            // ikut ditutup begitu paket terakhirnya selesai — kalau tidak, FE akan
+            // melihat shipment lain di bulk yang sama masih "delivered" dan memicu
+            // flow returning/finished ulang.
+            $driver = DB::connection()->getDriverName();
+            $bulkQuery = DB::table('bulk_assignments')->where('driver_id', $driverId);
+
             if ($driver === 'mysql') {
-                // MySQL syntax
-                $bulkAssignment = DB::table('bulk_assignments')
-                    ->where('driver_id', $driverId)
-                    ->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($completedShipment->id)])
-                    ->first();
+                $bulkQuery->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($completedShipment->id)]);
             } else {
-                // PostgreSQL syntax
-                $bulkAssignment = DB::table('bulk_assignments')
-                    ->where('driver_id', $driverId)
-                    ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)])
-                    ->first();
+                $bulkQuery->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)]);
             }
 
-            if (!$bulkAssignment) {
+            $bulkAssignments = $bulkQuery->get();
+
+            if ($bulkAssignments->isEmpty()) {
                 \Log::info('No bulk assignment found for completed shipment', [
                     'shipment_id' => $completedShipment->id,
                     'driver_id' => $driverId,
@@ -1631,37 +1629,33 @@ class ShipmentProgressController extends Controller
                 return;
             }
 
-            $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
-            
-            // Get all shipments in this bulk assignment
-            $allBulkShipments = Shipment::with('destinations')
-                ->whereIn('id', $shipmentIds)
-                ->where('assigned_driver_id', $driverId)
-                ->get();
+            foreach ($bulkAssignments as $bulkAssignment) {
+                $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
 
-            \Log::info('Checking bulk assignment completion status', [
-                'bulk_assignment_id' => $bulkAssignment->id,
-                'total_shipments' => $allBulkShipments->count(),
-                'shipment_ids' => $shipmentIds,
-            ]);
+                $allBulkShipments = Shipment::with('destinations')
+                    ->whereIn('id', $shipmentIds)
+                    ->where('assigned_driver_id', $driverId)
+                    ->get();
 
-            // Check if this is the last package (paket terakhir) that just finished
-            $isLastPackage = $this->isLastPackageInBulkAssignment($completedShipment, $allBulkShipments, $shipmentIds);
-            
-            if ($isLastPackage) {
-                \Log::info('Last package completed - updating all bulk assignment shipments', [
-                    'completed_shipment_id' => $completedShipment->id,
+                $isLastPackage = $this->isLastPackageInBulkAssignment($completedShipment, $allBulkShipments, $shipmentIds);
+
+                \Log::info('Checking bulk assignment completion status', [
                     'bulk_assignment_id' => $bulkAssignment->id,
+                    'total_shipments' => $allBulkShipments->count(),
+                    'shipment_ids' => $shipmentIds,
+                    'is_last_package' => $isLastPackage,
                 ]);
+
+                if (!$isLastPackage) {
+                    continue;
+                }
 
                 $updatedCount = 0;
                 foreach ($allBulkShipments as $bulkShipment) {
-                    // Skip the already completed shipment
                     if ($bulkShipment->id === $completedShipment->id) {
                         continue;
                     }
 
-                    // Update shipment status to completed if not already
                     if ($bulkShipment->status !== 'completed') {
                         $oldStatus = $bulkShipment->status;
                         $bulkShipment->update(['status' => 'completed']);
@@ -1672,10 +1666,18 @@ class ShipmentProgressController extends Controller
                             'shipment_code' => $bulkShipment->shipment_id,
                             'old_status' => $oldStatus,
                             'new_status' => 'completed',
-                            'reason' => 'Last package in bulk assignment completed',
+                            'bulk_assignment_id' => $bulkAssignment->id,
                             'trigger_shipment_id' => $completedShipment->id,
                         ]);
                     }
+
+                    // Tutup juga destinasi yang masih in-flight (selain returning/finished)
+                    // jadi `finished`. Tanpa ini FE `shouldShowBulkAssignment` masih
+                    // melihat destinasi `delivered` dan menampilkan tombol "Kembali ke
+                    // Kantor" untuk bulk yang sebenarnya sudah selesai.
+                    $bulkShipment->destinations()
+                        ->whereNotIn('status', ['finished', 'returning'])
+                        ->update(['status' => 'finished']);
                 }
 
                 \Log::info('Bulk assignment completion update finished', [
@@ -1683,13 +1685,7 @@ class ShipmentProgressController extends Controller
                     'updated_shipments_count' => $updatedCount,
                     'trigger_shipment_id' => $completedShipment->id,
                 ]);
-            } else {
-                \Log::info('Not the last package - no bulk update needed', [
-                    'completed_shipment_id' => $completedShipment->id,
-                    'bulk_assignment_id' => $bulkAssignment->id,
-                ]);
             }
-
         } catch (\Exception $e) {
             \Log::error('Failed to update bulk assignment status on completion', [
                 'shipment_id' => $completedShipment->id,

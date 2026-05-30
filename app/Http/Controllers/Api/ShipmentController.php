@@ -261,16 +261,25 @@ class ShipmentController extends Controller
             'driver_id' => 'required|exists:users,id',
         ]);
 
-        if ($shipment->status !== 'assigned') {
-            return response()->json([
-                'message' => 'Only assigned shipments can be reassigned',
-            ], 400);
-        }
+        $result = DB::transaction(function () use ($request, $shipment) {
+            // Kunci baris agar tidak balapan dengan takeover / startDelivery
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
 
-        $shipment->update([
-            'assigned_driver_id' => $request->driver_id,
-            'status' => 'assigned',
-        ]);
+            if ($locked->status !== 'assigned') {
+                return ['error' => 'Only assigned shipments can be reassigned', 'code' => 400];
+            }
+
+            $locked->update([
+                'assigned_driver_id' => $request->driver_id,
+                'status'             => 'assigned',
+            ]);
+
+            return ['ok' => true];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], $result['code']);
+        }
 
         // Send notification
         app(NotificationService::class)->shipmentAssigned($shipment->fresh(['driver', 'creator']));
@@ -650,27 +659,50 @@ class ShipmentController extends Controller
     {
         $this->authorize('assign-drivers');
 
-        if ($shipment->status !== 'assigned') {
-            return response()->json([
-                'message' => 'Only assigned shipments can be taken over',
-            ], 400);
+        $maxTakeover = config('shipment.max_takeover');
+
+        $result = DB::transaction(function () use ($shipment, $maxTakeover) {
+            // Kunci baris agar tidak balapan dengan startDelivery / takeover lain
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->status !== 'assigned') {
+                return ['error' => 'Only assigned shipments can be taken over', 'code' => 400];
+            }
+
+            // Batasi jumlah takeover; bila tercapai, eskalasi ke supervisor (jangan didaur ulang otomatis)
+            if ($locked->takeover_count >= $maxTakeover) {
+                $locked->update(['needs_review' => true]);
+
+                return [
+                    'error' => "Batas {$maxTakeover}x takeover tercapai. Pengiriman ditandai perlu peninjauan supervisor.",
+                    'code'  => 422,
+                ];
+            }
+
+            $previousDriverId = $locked->assigned_driver_id;
+
+            $locked->update([
+                'status'             => 'pending',
+                'assigned_driver_id' => null,
+                'approved_by'        => null,
+                'approved_at'        => null,
+                'takeover_count'     => $locked->takeover_count + 1,
+                'last_takeover_at'   => now(),
+            ]);
+
+            return ['previous_driver_id' => $previousDriverId];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], $result['code']);
         }
 
-        $previousDriverId = $shipment->assigned_driver_id;
-
-        $shipment->update([
-            'status' => 'pending',
-            'assigned_driver_id' => null,
-            'approved_by' => null,
-            'approved_at' => null,
-        ]);
-
         $fresh = $shipment->fresh(['creator']);
-        app(\App\Services\NotificationService::class)->shipmentPending($fresh);
+        app(NotificationService::class)->shipmentPending($fresh);
 
         // Notify the driver who lost the assignment
-        if ($previousDriverId) {
-            app(\App\Services\NotificationService::class)->shipmentAdminTakeover($fresh, $previousDriverId);
+        if ($result['previous_driver_id']) {
+            app(NotificationService::class)->shipmentAdminTakeover($fresh, $result['previous_driver_id']);
         }
 
         return response()->json([
@@ -880,7 +912,7 @@ class ShipmentController extends Controller
         ])
         ->whereIn('id', $shipmentIds)
         ->where('assigned_driver_id', $user->id) // ✅ FILTER: Only shipments still assigned to this driver
-        ->whereNotIn('status', ['cancelled']) // ✅ FILTER: Exclude cancelled shipments only
+        ->whereNotIn('status', ['cancelled', 'completed']) // ✅ FILTER: Exclude terminal statuses — konsisten dengan endpoint LIST agar shipment yang sudah completed (mis. duplikat di bulk lama) tidak ikut menyembunyikan bulk aktif di FE
         ->get();
 
         // ✅ If no shipments found, return not found

@@ -51,6 +51,9 @@ class Shipment extends Model
         'completed_by',
         'is_archived',
         'archived_at',
+        'takeover_count',
+        'needs_review',
+        'last_takeover_at',
     ];
 
     protected $casts = [
@@ -60,8 +63,11 @@ class Shipment extends Model
         'completed_at'                => 'datetime',
         'cancelled_at'                => 'datetime',
         'archived_at'                 => 'datetime',
+        'last_takeover_at'            => 'datetime',
         'deadline_locked'             => 'boolean',
         'is_archived'                 => 'boolean',
+        'needs_review'                => 'boolean',
+        'takeover_count'              => 'integer',
     ];
 
     /**
