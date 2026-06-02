@@ -33,9 +33,14 @@ class ShipmentController extends Controller
             $query->where('vehicle_type_id', $request->vehicle_type_id);
         }
 
-        // Filter by status
+        // Filter by status (supports comma-separated: "pending,assigned,in_progress")
         if ($request->has('status')) {
-            $query->where('status', $request->status);
+            $statuses = explode(',', $request->status);
+            if (count($statuses) > 1) {
+                $query->whereIn('status', $statuses);
+            } else {
+                $query->where('status', $request->status);
+            }
         }
 
         // Filter by priority
