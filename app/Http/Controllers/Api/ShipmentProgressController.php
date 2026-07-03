@@ -985,7 +985,7 @@ class ShipmentProgressController extends Controller
             $shipmentIds = json_decode($bulkAssignment->shipment_ids);
             
             // Get shipments with their destinations and progress
-            $shipments = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator'])
+            $shipments = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator', 'category', 'tugasPengiriman'])
                 ->whereIn('id', $shipmentIds)
                 ->get();
 
@@ -1023,6 +1023,8 @@ class ShipmentProgressController extends Controller
                     'shipment_id' => $shipment->shipment_id,
                     'creator' => $shipment->creator->name,
                     'current_status' => $shipment->status,
+                    'category' => $shipment->category->name ?? null,
+                    'tugas_pengiriman' => $shipment->tugasPengiriman->tugas ?? null,
                     'destinations' => [],
                     'shipment_timing' => null,
                 ];

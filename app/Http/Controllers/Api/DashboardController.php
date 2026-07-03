@@ -33,28 +33,41 @@ class DashboardController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $user      = $request->user();
-        $cacheKey  = "dashboard.index.{$user->id}";
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to'   => 'nullable|date',
+        ]);
 
-        $stats = Cache::remember($cacheKey, 120, function () use ($user) {
+        $user     = $request->user();
+        $dateFrom = Carbon::parse($request->input('date_from', Carbon::now()->subMonths(3)->format('Y-m-d')))->startOfDay();
+        $dateTo   = Carbon::parse($request->input('date_to', Carbon::now()->format('Y-m-d')))->endOfDay();
+        $cacheKey = "dashboard.index.{$user->id}.{$dateFrom->format('Y-m-d')}.{$dateTo->format('Y-m-d')}";
+
+        $stats = Cache::remember($cacheKey, 120, function () use ($user, $dateFrom, $dateTo) {
             $data = [
-                'shipments'   => $this->getPrivateShipmentStats($user),
-                'deliveries'  => $this->getPrivateDeliveryStats($user),
-                'performance' => $this->getPrivatePerformanceStats($user),
+                'shipments'   => $this->getPrivateShipmentStats($user, $dateFrom, $dateTo),
+                'deliveries'  => $this->getPrivateDeliveryStats($user, $dateFrom, $dateTo),
+                'performance' => $this->getPrivatePerformanceStats($user, $dateFrom, $dateTo),
             ];
 
             if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
-                $data['admin'] = $this->getAdminStats();
+                $data['admin'] = $this->getAdminStats($dateFrom, $dateTo);
             } elseif ($user->hasRole('Kurir')) {
-                $data['driver'] = $this->getDriverStats($user);
+                $data['driver'] = $this->getDriverStats($user, $dateFrom, $dateTo);
             } else {
-                $data['user'] = $this->getUserStats($user);
+                $data['user'] = $this->getUserStats($user, $dateFrom, $dateTo);
             }
 
             return $data;
         });
 
-        return response()->json(['data' => $stats]);
+        return response()->json([
+            'data' => $stats,
+            'meta' => [
+                'date_from' => $dateFrom->format('Y-m-d'),
+                'date_to'   => $dateTo->format('Y-m-d'),
+            ],
+        ]);
     }
 
     /**
@@ -71,7 +84,7 @@ class DashboardController extends Controller
         }
     }
 
-    private function getPrivateShipmentStats($user): array
+    private function getPrivateShipmentStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
         // ✅ PRIVATE DASHBOARD: Data berbeda berdasarkan role user
         if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
@@ -84,6 +97,8 @@ class DashboardController extends Controller
             // User biasa hanya melihat shipment yang mereka buat
             $query = Shipment::where('created_by', $user->id);
         }
+
+        $query->whereBetween('created_at', [$dateFrom, $dateTo]);
 
         return [
             'total' => $query->count(),
@@ -98,7 +113,7 @@ class DashboardController extends Controller
         ];
     }
 
-    private function getPrivateDeliveryStats($user): array
+    private function getPrivateDeliveryStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
         $today = now()->startOfDay();
         $thisWeek = now()->startOfWeek();
@@ -116,33 +131,32 @@ class DashboardController extends Controller
             $query = Shipment::where('created_by', $user->id);
         }
 
+        $query->where('status', 'completed')
+            ->whereBetween('updated_at', [$dateFrom, $dateTo]);
+
         return [
-            'today' => $query->clone()->where('status', 'completed')
-                ->whereDate('updated_at', $today)->count(),
-            'this_week' => $query->clone()->where('status', 'completed')
-                ->where('updated_at', '>=', $thisWeek)->count(),
-            'this_month' => $query->clone()->where('status', 'completed')
-                ->where('updated_at', '>=', $thisMonth)->count(),
+            'today' => $query->clone()->whereDate('updated_at', $today)->count(),
+            'this_week' => $query->clone()->where('updated_at', '>=', $thisWeek)->count(),
+            'this_month' => $query->clone()->where('updated_at', '>=', $thisMonth)->count(),
+            'in_range' => $query->count(),
         ];
     }
 
-    private function getPrivatePerformanceStats($user): array
+    private function getPrivatePerformanceStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
-        $thisMonth = now()->startOfMonth();
-
         // ✅ PRIVATE DASHBOARD: Data performa berbeda berdasarkan role user
         if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat performa keseluruhan sistem
-            $query = Shipment::query()->where('updated_at', '>=', $thisMonth);
+            $query = Shipment::query();
         } elseif ($user->hasRole('Kurir')) {
             // Kurir melihat performa mereka sendiri
-            $query = Shipment::where('assigned_driver_id', $user->id)
-                ->where('updated_at', '>=', $thisMonth);
+            $query = Shipment::where('assigned_driver_id', $user->id);
         } else {
             // User biasa melihat performa shipment mereka
-            $query = Shipment::where('created_by', $user->id)
-                ->where('updated_at', '>=', $thisMonth);
+            $query = Shipment::where('created_by', $user->id);
         }
+
+        $query->whereBetween('updated_at', [$dateFrom, $dateTo]);
 
         $total = $query->count();
         $completed = $query->clone()->where('status', 'completed')->count();
@@ -155,9 +169,11 @@ class DashboardController extends Controller
         ];
     }
 
-    private function getAdminStats(): array
+    private function getAdminStats(Carbon $dateFrom, Carbon $dateTo): array
     {
         return [
+            // Pending approval & driver/user counts merepresentasikan state SEKARANG,
+            // bukan histori — tidak ikut difilter rentang tanggal.
             'pending_approvals' => Shipment::where('status', 'pending')->count(),
             'unassigned_shipments' => Shipment::where('status', 'approved')
                 ->whereNull('assigned_driver_id')->count(),
@@ -170,17 +186,19 @@ class DashboardController extends Controller
                 ->count(),
             'total_users' => User::where('is_active', true)->count(),
             'recent_shipments' => Shipment::with(['creator', 'driver'])
+                ->whereBetween('created_at', [$dateFrom, $dateTo])
                 ->orderBy('created_at', 'desc')
                 ->limit(5)
                 ->get(['id', 'shipment_id', 'status', 'priority', 'created_by', 'assigned_driver_id', 'created_at']),
         ];
     }
 
-    private function getDriverStats($user): array
+    private function getDriverStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
         $today = now()->startOfDay();
 
         return [
+            // Status "sekarang" (tugas berjalan) — tidak ikut difilter rentang tanggal.
             'assigned_today' => Shipment::where('assigned_driver_id', $user->id)
                 ->whereDate('approved_at', $today)->count(),
             'in_progress' => Shipment::where('assigned_driver_id', $user->id)
@@ -193,22 +211,27 @@ class DashboardController extends Controller
                 ->where('shipments.assigned_driver_id', $user->id)
                 ->where('shipment_destinations.status', 'pending')
                 ->count(),
+            'completed_in_range' => Shipment::where('assigned_driver_id', $user->id)
+                ->where('status', 'completed')
+                ->whereBetween('updated_at', [$dateFrom, $dateTo])
+                ->count(),
         ];
     }
 
-    private function getUserStats($user): array
+    private function getUserStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
-        $thisMonth = now()->startOfMonth();
-
         return [
-            'my_shipments' => Shipment::where('created_by', $user->id)->count(),
+            'my_shipments' => Shipment::where('created_by', $user->id)
+                ->whereBetween('created_at', [$dateFrom, $dateTo])->count(),
             'pending_approval' => Shipment::where('created_by', $user->id)
-                ->where('status', 'pending')->count(),
+                ->where('status', 'pending')
+                ->whereBetween('created_at', [$dateFrom, $dateTo])->count(),
             'in_delivery' => Shipment::where('created_by', $user->id)
-                ->whereIn('status', ['assigned', 'in_progress'])->count(),
+                ->whereIn('status', ['assigned', 'in_progress'])
+                ->whereBetween('created_at', [$dateFrom, $dateTo])->count(),
             'completed_this_month' => Shipment::where('created_by', $user->id)
                 ->where('status', 'completed')
-                ->where('created_at', '>=', $thisMonth)->count(),
+                ->whereBetween('created_at', [$dateFrom, $dateTo])->count(),
         ];
     }
 
@@ -335,7 +358,7 @@ class DashboardController extends Controller
     public function getShipmentChartData(Request $request): JsonResponse
     {
         $request->validate([
-            'chart_type'      => 'required|in:daily,monthly,yearly,category,vehicle_type,customer,status,priority,total',
+            'chart_type'      => 'required|in:daily,monthly,yearly,category,tugas_pengiriman,vehicle_type,customer,status,priority,total',
             'date_from'       => 'nullable|date',
             'date_to'         => 'nullable|date|after_or_equal:date_from',
             'period'          => 'nullable|in:day,week,month,year',
@@ -396,6 +419,9 @@ class DashboardController extends Controller
                 break;
             case 'category':
                 $data = $this->getCategoryChartData($query);
+                break;
+            case 'tugas_pengiriman':
+                $data = $this->getTugasPengirimanChartData($query);
                 break;
             case 'vehicle_type':
                 $data = $this->getVehicleTypeChartData($query);
@@ -550,6 +576,28 @@ class DashboardController extends Controller
             return [
                 'category_id' => $item->id,
                 'category_name' => $item->name,
+                'count' => (int) $item->count,
+                'percentage' => $total > 0 ? round(($item->count / $total) * 100, 2) : 0,
+            ];
+        })->toArray();
+    }
+
+    private function getTugasPengirimanChartData($query): array
+    {
+        // Clone query untuk menghitung total
+        $totalQuery = clone $query;
+        $total = $totalQuery->count();
+
+        $data = $query->join('tugas_pengiriman', 'shipments.tugas_pengiriman_id', '=', 'tugas_pengiriman.id')
+            ->selectRaw('tugas_pengiriman.id, tugas_pengiriman.tugas, COUNT(shipments.id) as count')
+            ->groupBy('tugas_pengiriman.id', 'tugas_pengiriman.tugas')
+            ->orderBy('count', 'desc')
+            ->get();
+
+        return $data->map(function ($item) use ($total) {
+            return [
+                'tugas_pengiriman_id' => $item->id,
+                'tugas_name' => $item->tugas,
                 'count' => (int) $item->count,
                 'percentage' => $total > 0 ? round(($item->count / $total) * 100, 2) : 0,
             ];
@@ -1368,7 +1416,7 @@ class DashboardController extends Controller
 
     /**
      * GET /api/v1/dashboard/delivery-trend
-     * Tren pengiriman per bulan: Kurir Internal vs Kurir Online
+     * Tren pengiriman per hari: Kurir Internal vs Kurir Online
      *
      * - Internal : assigned_driver_id IS NOT NULL  (driver internal assigned)
      * - Online   : vehicle_used IS NOT NULL AND shipping_cost IS NOT NULL
@@ -1403,32 +1451,32 @@ class DashboardController extends Controller
 
         $shipments = $query->get();
 
-        // Kelompokkan per bulan
+        // Kelompokkan per hari
         $grouped = $shipments->groupBy(function ($s) {
-            return Carbon::parse($s->created_at)->format('Y-m');
+            return Carbon::parse($s->created_at)->format('Y-m-d');
         });
 
-        // Isi setiap bulan dalam range (termasuk bulan tanpa data = 0)
+        // Isi setiap hari dalam range (termasuk hari tanpa data = 0)
         $result  = [];
-        $current = $dateFrom->copy()->startOfMonth();
-        $end     = $dateTo->copy()->startOfMonth();
+        $current = $dateFrom->copy()->startOfDay();
+        $end     = $dateTo->copy()->startOfDay();
 
         while ($current <= $end) {
-            $key   = $current->format('Y-m');
+            $key   = $current->format('Y-m-d');
             $items = $grouped->get($key, collect());
 
             $internal = $items->filter(fn($s) => ! is_null($s->assigned_driver_id))->count();
             $online   = $items->filter(fn($s) => ! empty($s->vehicle_used) && ! is_null($s->shipping_cost))->count();
 
             $result[] = [
-                'period'   => $current->locale('id')->isoFormat('MMM YYYY'),
+                'period'   => $current->locale('id')->isoFormat('D MMM'),
                 'period_key' => $key,
                 'online'   => $online,
                 'internal' => $internal,
                 'total'    => $online + $internal,
             ];
 
-            $current->addMonth();
+            $current->addDay();
         }
 
         $totalOnline   = $shipments->filter(fn($s) => ! empty($s->vehicle_used) && ! is_null($s->shipping_cost))->count();
