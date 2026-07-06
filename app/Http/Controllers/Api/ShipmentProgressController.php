@@ -294,7 +294,7 @@ class ShipmentProgressController extends Controller
 
                 if ($allDestinationsFinished) {
                     $oldShipmentStatus = $shipment->status;
-                    $shipment->update(['status' => 'completed']);
+                    $shipment->update(['status' => 'completed', 'completed_at' => $shipment->completed_at ?? now()]);
                     \Log::info('Shipment marked as completed', [
                         'shipment_id' => $shipment->id,
                         'old_status' => $oldShipmentStatus,
@@ -1660,7 +1660,7 @@ class ShipmentProgressController extends Controller
 
                     if ($bulkShipment->status !== 'completed') {
                         $oldStatus = $bulkShipment->status;
-                        $bulkShipment->update(['status' => 'completed']);
+                        $bulkShipment->update(['status' => 'completed', 'completed_at' => $bulkShipment->completed_at ?? now()]);
                         $updatedCount++;
 
                         \Log::info('Bulk shipment status updated to completed', [
