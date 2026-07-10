@@ -17,7 +17,6 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->enum('category', ['customer', 'supplier'])->default('customer');
             $table->timestamps();
-
             $table->index('company_name');
             $table->index('is_active');
         });

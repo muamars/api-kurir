@@ -20,7 +20,7 @@ class UpdateCustomerRequest extends FormRequest
                 Rule::unique('customers', 'company_name')->ignore($this->route('customer')),
             ],
             'customer_name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20',
+            'phone' => 'sometimes|string|max:700',
             'address' => 'sometimes|string',
             'is_active' => 'boolean',
             'category' => 'sometimes|in:customer,supplier',
