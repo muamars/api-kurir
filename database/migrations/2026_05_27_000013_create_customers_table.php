@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('company_name');
             $table->string('customer_name');
-            $table->string('phone');
+            $table->text('phone')->nullable();
             $table->text('address');
             $table->boolean('is_active')->default(true);
             $table->enum('category', ['customer', 'supplier'])->default('customer');
