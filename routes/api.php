@@ -115,6 +115,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/driver/history', [ShipmentProgressController::class, 'getDriverHistory']);
         Route::get('/driver/performance-report', [ShipmentProgressController::class, 'getDriverPerformanceReport']);
         Route::get('/driver/route-report', [ShipmentProgressController::class, 'getDriverRouteReport']);
+        Route::get('/driver/route-report-summary', [ShipmentProgressController::class, 'getDriverRouteReportSummary']);
+        Route::get('/driver/timing-summary', [ShipmentProgressController::class, 'getDriverTimingSummary']);
 
         // Dashboard
         Route::get('/dashboard', [DashboardController::class, 'index']);
@@ -124,6 +126,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/dashboard/shipments-table', [DashboardController::class, 'getShipmentsTable']);
         Route::get('/dashboard/delivery-trend', [DashboardController::class, 'getDeliveryTrend']);
         Route::get('/dashboard/driver-accumulation', [DashboardController::class, 'getDriverAccumulation']);
+        Route::get('/dashboard/user-request-analysis', [DashboardController::class, 'getUserRequestAnalysis']);
+        Route::get('/dashboard/cancel-order-analysis', [DashboardController::class, 'getCancelOrderAnalysis']);
         Route::get('/dashboardDelivery', [DashboardController::class, 'dashboardDelivery']);
         Route::get('/dashboard/test', function() {
             return response()->json(['message' => 'Test endpoint works', 'time' => now()]);

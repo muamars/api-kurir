@@ -394,8 +394,15 @@ class DashboardController extends Controller
             $query->where('created_by', $user->id);
         }
 
-        // Date filtering
+        // Date filtering — falls back to the last 3 months when the caller gives no
+        // date_from/date_to/period, to avoid an unbounded scan/aggregate over the
+        // entire shipments table for Admin users. Column is prefixed with the table
+        // name because some chart_type branches below join in other tables that also
+        // have a created_at column (ambiguous-column error otherwise).
         $this->applyDateFilter($query, $request);
+        if (!$request->date_from && !$request->date_to && !$request->period) {
+            $query->whereBetween('shipments.created_at', [now()->subMonths(3)->startOfDay(), now()->endOfDay()]);
+        }
 
         // Additional filters
         if ($request->category_id) {
@@ -968,34 +975,52 @@ class DashboardController extends Controller
                 ];
             });
 
-            // Summary statistics untuk antrian (exclude completed by default)
+            // Summary statistics untuk antrian (exclude completed by default).
+            // Cached briefly (30s) since this previously ran 9 separate full-table
+            // COUNT queries (including one literal duplicate) on every single request.
             $showCompleted = $request->get('show_completed', false);
-            $summaryQuery = Shipment::query();
-            if (!$showCompleted) {
-                $summaryQuery->where('status', '!=', 'completed');
-            }
-            
-            $summary = [
-                'total_shipments' => $shipments->total(),
-                'total_in_system' => Shipment::count(), // Total semua tiket di sistem
-                'status_counts' => [
-                    'pending' => $summaryQuery->clone()->where('status', 'pending')->count(),
-                    'assigned' => $summaryQuery->clone()->where('status', 'assigned')->count(),
-                    'in_progress' => $summaryQuery->clone()->where('status', 'in_progress')->count(),
-                    'completed' => Shipment::where('status', 'completed')->count(), // Selalu tampilkan jumlah completed
-                    'cancelled' => $summaryQuery->clone()->where('status', 'cancelled')->count(),
-                ],
-                'priority_counts' => [
-                    'urgent' => $summaryQuery->clone()->where('priority', 'urgent')->count(),
-                    'regular' => $summaryQuery->clone()->where('priority', 'regular')->count(),
-                ],
-                'overdue_count' => $summaryQuery->clone()
-                    ->where('deadline', '<', now())
-                    ->whereNotIn('status', ['completed', 'cancelled'])
-                    ->count(),
-                'completed_hidden' => !$showCompleted,
-                'completed_count' => Shipment::where('status', 'completed')->count(),
-            ];
+            $summary = Cache::remember(
+                "dashboard:shipments-table:summary:{$showCompleted}",
+                30,
+                function () use ($showCompleted) {
+                    // One query for all status counts, one for all priority counts.
+                    $statusCounts = Shipment::select('status')
+                        ->selectRaw('count(*) as total')
+                        ->groupBy('status')
+                        ->pluck('total', 'status');
+
+                    $priorityCounts = Shipment::select('priority')
+                        ->selectRaw('count(*) as total')
+                        ->groupBy('priority')
+                        ->pluck('total', 'priority');
+
+                    $totalInSystem = $statusCounts->sum();
+                    $completedCount = $statusCounts->get('completed', 0);
+
+                    $overdueCount = Shipment::where('deadline', '<', now())
+                        ->whereNotIn('status', ['completed', 'cancelled'])
+                        ->count();
+
+                    return [
+                        'total_in_system' => $totalInSystem,
+                        'status_counts' => [
+                            'pending' => $statusCounts->get('pending', 0),
+                            'assigned' => $statusCounts->get('assigned', 0),
+                            'in_progress' => $statusCounts->get('in_progress', 0),
+                            'completed' => $completedCount,
+                            'cancelled' => $statusCounts->get('cancelled', 0),
+                        ],
+                        'priority_counts' => [
+                            'urgent' => $priorityCounts->get('urgent', 0),
+                            'regular' => $priorityCounts->get('regular', 0),
+                        ],
+                        'overdue_count' => $overdueCount,
+                        'completed_hidden' => !$showCompleted,
+                        'completed_count' => $completedCount,
+                    ];
+                }
+            );
+            $summary['total_shipments'] = $shipments->total();
 
             return response()->json([
                 'message' => 'Antrian tiket berhasil diambil',
@@ -1092,7 +1117,7 @@ class DashboardController extends Controller
 
         // Base query berdasarkan role user - hanya shipment completed
         $query = Shipment::query()->where('status', 'completed');
-        
+
         if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
             // Admin melihat semua data
         } elseif ($user->hasRole('Kurir')) {
@@ -1103,8 +1128,14 @@ class DashboardController extends Controller
             $query->where('created_by', $user->id);
         }
 
-        // Apply date filter
+        // Apply date filter — falls back to the last 3 months when the caller gives
+        // no date_from/date_to/period, so this never does an unbounded full-table
+        // fetch of every completed shipment ever (which grows without bound).
+        $hasExplicitFilter = ($request->date_from && $request->date_to) || $request->period;
         $this->applyDateFilterForReport($query, $request);
+        if (!$hasExplicitFilter) {
+            $query->whereBetween('completed_at', [now()->subMonths(3)->startOfDay(), now()->endOfDay()]);
+        }
 
         // Get data dengan informasi lengkap
         $shipments = $query->select([
@@ -1171,8 +1202,8 @@ class DashboardController extends Controller
             'meta' => [
                 'period' => $request->period ?? 'custom',
                 'date_range' => [
-                    'from' => $request->date_from ?? 'All time',
-                    'to' => $request->date_to ?? 'All time',
+                    'from' => $request->date_from ?? ($hasExplicitFilter ? 'All time' : now()->subMonths(3)->startOfDay()->format('Y-m-d')),
+                    'to' => $request->date_to ?? ($hasExplicitFilter ? 'All time' : now()->format('Y-m-d')),
                 ],
                 'group_by' => $request->group_by,
                 'user_scope' => $user->hasAnyRole(['Admin', 'Super Admin']) ? 'all_data' : ($user->hasRole('Kurir') ? 'assigned_shipments' : 'own_shipments'),
@@ -1415,6 +1446,173 @@ class DashboardController extends Controller
     }
 
     /**
+     * GET /api/v1/dashboard/user-request-analysis
+     * Analisa request pengiriman: tujuan tersering, pembuat tiket/divisi terbanyak,
+     * dan jumlah per prioritas. Semua SQL GROUP BY aggregates (no row hydration),
+     * scoped to a date range so this stays cheap regardless of table size.
+     *
+     * Query params:
+     *   date_from  (default: 3 bulan lalu)
+     *   date_to    (default: hari ini)
+     */
+    public function getUserRequestAnalysis(Request $request): JsonResponse
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $dateFrom = $request->date_from
+            ? Carbon::parse($request->date_from)->startOfDay()
+            : now()->subMonths(3)->startOfDay();
+        $dateTo = $request->date_to
+            ? Carbon::parse($request->date_to)->endOfDay()
+            : now()->endOfDay();
+
+        $shipmentsInRange = fn () => DB::table('shipments as s')
+            ->whereBetween('s.created_at', [$dateFrom, $dateTo]);
+
+        // Tempat tujuan tersering — prefer the linked customer's company name
+        // (consistent even if free-text receiver_company has spelling variants),
+        // falling back to the raw receiver_company for destinations not linked to
+        // a saved customer record.
+        $topDestinations = DB::table('shipment_destinations as sd')
+            ->join('shipments as s', 's.id', '=', 'sd.shipment_id')
+            ->leftJoin('customers as c', 'sd.customer_id', '=', 'c.id')
+            ->whereBetween('s.created_at', [$dateFrom, $dateTo])
+            ->selectRaw('COALESCE(c.company_name, sd.receiver_company) as place_name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('place_name')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->get();
+
+        // User/divisi pembuat tiket terbanyak — division shown is the one tagged
+        // directly on the shipment (shipments.division_id), not the creator's home
+        // division, since that's the more relevant "which division requested this."
+        $topCreators = $shipmentsInRange()
+            ->join('users as u', 's.created_by', '=', 'u.id')
+            ->leftJoin('divisions as d', 's.division_id', '=', 'd.id')
+            ->select('u.id as user_id', 'u.name as user_name')
+            ->selectRaw('COALESCE(d.name, "Tanpa Divisi") as division_name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('u.id', 'u.name', 'd.name')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->get();
+
+        $divisionCounts = $shipmentsInRange()
+            ->leftJoin('divisions as d', 's.division_id', '=', 'd.id')
+            ->selectRaw('COALESCE(d.name, "Tanpa Divisi") as division_name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('d.name')
+            ->orderByDesc('total')
+            ->get();
+
+        $priorityCounts = $shipmentsInRange()
+            ->select('s.priority')
+            ->selectRaw('count(*) as total')
+            ->groupBy('s.priority')
+            ->orderByDesc('total')
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'top_destinations' => $topDestinations,
+                'top_creators' => $topCreators,
+                'division_counts' => $divisionCounts,
+                'priority_counts' => $priorityCounts,
+            ],
+            'meta' => [
+                'date_from' => $dateFrom->format('Y-m-d'),
+                'date_to' => $dateTo->format('Y-m-d'),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/v1/dashboard/cancel-order-analysis
+     * Analisa pengiriman yang dibatalkan: total & tren cancel, breakdown alasan
+     * cancel (normalized case/whitespace so free-text variants group together),
+     * dan siapa yang membatalkan. Filtered by cancelled_at (when the cancellation
+     * happened), not created_at — a shipment created long ago but cancelled today
+     * should count toward today's range. All SQL GROUP BY aggregates.
+     *
+     * Query params:
+     *   date_from  (default: 3 bulan lalu)
+     *   date_to    (default: hari ini)
+     */
+    public function getCancelOrderAnalysis(Request $request): JsonResponse
+    {
+        $request->validate([
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $dateFrom = $request->date_from
+            ? Carbon::parse($request->date_from)->startOfDay()
+            : now()->subMonths(3)->startOfDay();
+        $dateTo = $request->date_to
+            ? Carbon::parse($request->date_to)->endOfDay()
+            : now()->endOfDay();
+
+        $cancelledInRange = fn () => DB::table('shipments as s')
+            ->where('s.status', 'cancelled')
+            ->whereBetween('s.cancelled_at', [$dateFrom, $dateTo]);
+
+        $totalCancelled = $cancelledInRange()->count();
+        $totalShipments = DB::table('shipments as s')
+            ->whereBetween('s.created_at', [$dateFrom, $dateTo])
+            ->count();
+
+        // Alasan cancel — normalize case/whitespace so "Barang rusak" and
+        // "barang  rusak " group together instead of showing as separate rows.
+        $cancelReasons = $cancelledInRange()
+            ->selectRaw("COALESCE(NULLIF(TRIM(LOWER(s.cancel_reason)), ''), 'tidak ada alasan') as reason_key")
+            ->selectRaw('MIN(TRIM(s.cancel_reason)) as reason_label')
+            ->selectRaw('count(*) as total')
+            ->groupBy('reason_key')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->get()
+            ->map(function ($row) {
+                $row->reason_label = $row->reason_label !== null && $row->reason_label !== '' ? $row->reason_label : 'Tidak ada alasan';
+                return $row;
+            });
+
+        // Siapa yang membatalkan.
+        $cancelledByUsers = $cancelledInRange()
+            ->join('users as u', 's.cancelled_by', '=', 'u.id')
+            ->leftJoin('divisions as d', 'u.division_id', '=', 'd.id')
+            ->select('u.id as user_id', 'u.name as user_name')
+            ->selectRaw('COALESCE(d.name, "Tanpa Divisi") as division_name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('u.id', 'u.name', 'd.name')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->get();
+
+        // Cancel tanpa cancelled_by tercatat (mis. dibatalkan lewat proses lama /
+        // data historis) — dihitung terpisah supaya tidak hilang dari total.
+        $cancelledByUnknownCount = $cancelledInRange()->whereNull('s.cancelled_by')->count();
+
+        return response()->json([
+            'data' => [
+                'total_cancelled' => $totalCancelled,
+                'total_shipments' => $totalShipments,
+                'cancellation_rate' => $totalShipments > 0 ? round(($totalCancelled / $totalShipments) * 100, 2) : 0,
+                'cancel_reasons' => $cancelReasons,
+                'cancelled_by_users' => $cancelledByUsers,
+                'cancelled_by_unknown' => $cancelledByUnknownCount,
+            ],
+            'meta' => [
+                'date_from' => $dateFrom->format('Y-m-d'),
+                'date_to' => $dateTo->format('Y-m-d'),
+            ],
+        ]);
+    }
+
+    /**
      * GET /api/v1/dashboard/delivery-trend
      * Tren pengiriman per hari: Kurir Internal vs Kurir Online
      *
@@ -1515,24 +1713,34 @@ class DashboardController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        $result = $drivers->map(function (User $driver) use ($dateFrom, $dateTo) {
-            // Gunakan ShipmentProgress (log aktivitas) agar setiap tahap pengiriman
-            // selalu punya nilai — bukan snapshot status saat ini.
-            $prog = ShipmentProgress::where('driver_id', $driver->id)
-                ->whereBetween('progress_time', [$dateFrom, $dateTo]);
+        $driverIds = $drivers->pluck('id');
+
+        // Single query for every driver's progress rows in range, grouped in-memory
+        // per driver — replaces what used to be up to 7 queries per driver.
+        $progressByDriver = ShipmentProgress::whereIn('driver_id', $driverIds)
+            ->whereBetween('progress_time', [$dateFrom, $dateTo])
+            ->get(['driver_id', 'destination_id', 'status', 'progress_time'])
+            ->groupBy('driver_id');
+
+        // Single query for "assigned but not yet started" counts across all drivers.
+        $assignedCounts = Shipment::whereIn('assigned_driver_id', $driverIds)
+            ->where('status', 'assigned')
+            ->whereBetween('created_at', [$dateFrom, $dateTo])
+            ->select('assigned_driver_id')
+            ->selectRaw('count(*) as total')
+            ->groupBy('assigned_driver_id')
+            ->pluck('total', 'assigned_driver_id');
+
+        $statusKeys = ['picked', 'in_progress', 'arrived', 'delivered', 'takeover'];
+
+        $result = $drivers->map(function (User $driver) use ($progressByDriver, $assignedCounts, $statusKeys) {
+            $rows = $progressByDriver->get($driver->id, collect());
+            $byStatus = $rows->groupBy('status');
+
+            $pickedRows = $byStatus->get('picked', collect())->keyBy('destination_id');
+            $deliveredRows = $byStatus->get('delivered', collect())->keyBy('destination_id');
 
             // Hitung total durasi: dari status 'picked' ke 'delivered' per destinasi
-            $pickedRows = (clone $prog)
-                ->where('status', 'picked')
-                ->get(['destination_id', 'progress_time'])
-                ->keyBy('destination_id');
-
-            $deliveredRows = (clone $prog)
-                ->where('status', 'delivered')
-                ->whereIn('destination_id', $pickedRows->keys())
-                ->get(['destination_id', 'progress_time'])
-                ->keyBy('destination_id');
-
             $totalMinutes  = 0;
             $countFinished = 0;
             foreach ($pickedRows as $destId => $picked) {
@@ -1544,20 +1752,19 @@ class DashboardController extends Controller
 
             $avgMinutes = $countFinished > 0 ? (int) round($totalMinutes / $countFinished) : 0;
 
-            // Shipment level: sudah di-assign ke driver tapi belum mulai dikirim
-            $assignedCount = Shipment::where('assigned_driver_id', $driver->id)
-                ->where('status', 'assigned')
-                ->whereBetween('created_at', [$dateFrom, $dateTo])
-                ->count();
+            $statusCounts = [];
+            foreach ($statusKeys as $status) {
+                $statusCounts[$status] = $byStatus->get($status, collect())->count();
+            }
 
             return [
                 'driver'                 => ['id' => $driver->id, 'name' => $driver->name],
-                'assigned'               => $assignedCount,
-                'picked'                 => (clone $prog)->where('status', 'picked')->count(),
-                'in_progress'            => (clone $prog)->where('status', 'in_progress')->count(),
-                'arrived'                => (clone $prog)->where('status', 'arrived')->count(),
-                'delivered'              => (clone $prog)->where('status', 'delivered')->count(),
-                'takeover'               => (clone $prog)->where('status', 'takeover')->count(),
+                'assigned'               => $assignedCounts->get($driver->id, 0),
+                'picked'                 => $statusCounts['picked'],
+                'in_progress'            => $statusCounts['in_progress'],
+                'arrived'                => $statusCounts['arrived'],
+                'delivered'              => $statusCounts['delivered'],
+                'takeover'               => $statusCounts['takeover'],
                 'total_duration_minutes' => $totalMinutes,
                 'avg_duration_minutes'   => $avgMinutes,
                 'deliveries_counted'     => $countFinished,
@@ -1604,16 +1811,27 @@ class DashboardController extends Controller
             return response()->json($idleResponse);
         }
 
+        // Fetch every shipment id referenced by this driver's bulk assignments in one
+        // query, then pick the active bulk in-memory — avoids an exists() query per
+        // bulk assignment (previously up to 2 queries per row of $allBulks).
+        $bulkShipmentIds = [];
+        foreach ($allBulks as $bulk) {
+            $bulkShipmentIds[$bulk->id] = json_decode($bulk->shipment_ids, true) ?? [];
+        }
+
+        $allReferencedIds = array_unique(array_merge(...array_values($bulkShipmentIds ?: [[]])));
+
+        $statusByShipmentId = Shipment::whereIn('id', $allReferencedIds)
+            ->where('assigned_driver_id', $user->id)
+            ->pluck('status', 'id');
+
         $activeBulk = null;
 
         foreach ($allBulks as $bulk) {
-            $shipmentIds = json_decode($bulk->shipment_ids, true) ?? [];
+            $shipmentIds = $bulkShipmentIds[$bulk->id];
             if (empty($shipmentIds)) continue;
 
-            $hasInProgress = Shipment::whereIn('id', $shipmentIds)
-                ->where('assigned_driver_id', $user->id)
-                ->where('status', 'in_progress')
-                ->exists();
+            $hasInProgress = collect($shipmentIds)->contains(fn ($id) => ($statusByShipmentId[$id] ?? null) === 'in_progress');
 
             if ($hasInProgress) {
                 $activeBulk = $bulk;
@@ -1623,13 +1841,10 @@ class DashboardController extends Controller
 
         if (!$activeBulk) {
             foreach ($allBulks as $bulk) {
-                $shipmentIds = json_decode($bulk->shipment_ids, true) ?? [];
+                $shipmentIds = $bulkShipmentIds[$bulk->id];
                 if (empty($shipmentIds)) continue;
 
-                $hasAssigned = Shipment::whereIn('id', $shipmentIds)
-                    ->where('assigned_driver_id', $user->id)
-                    ->where('status', 'assigned')
-                    ->exists();
+                $hasAssigned = collect($shipmentIds)->contains(fn ($id) => ($statusByShipmentId[$id] ?? null) === 'assigned');
 
                 if ($hasAssigned) {
                     $activeBulk = $bulk;

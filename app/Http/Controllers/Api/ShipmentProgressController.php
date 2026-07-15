@@ -936,58 +936,77 @@ class ShipmentProgressController extends Controller
             'bulk_assignment_id' => 'nullable|exists:bulk_assignments,id',
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
-        $query = DB::table('bulk_assignments as ba')
-            ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
-            ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
-            ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
-            ->select([
-                'ba.id as bulk_assignment_id',
-                'ba.shipment_count',
-                'ba.shipment_ids',
-                'ba.assigned_at',
-                'admin.name as admin_name',
-                'driver.id as driver_id',
-                'driver.name as driver_name',
-                'vt.name as vehicle_type_name'
-            ]);
+        $applyFilters = function ($query) use ($request) {
+            if ($request->driver_id) {
+                $query->where('ba.driver_id', $request->driver_id);
+            }
+            if ($request->bulk_assignment_id) {
+                $query->where('ba.id', $request->bulk_assignment_id);
+            }
+            if ($request->date_from) {
+                $query->whereDate('ba.assigned_at', '>=', $request->date_from);
+            }
+            if ($request->date_to) {
+                $query->whereDate('ba.assigned_at', '<=', $request->date_to);
+            }
+            return $query;
+        };
 
-        // Filter by specific driver
-        if ($request->driver_id) {
-            $query->where('ba.driver_id', $request->driver_id);
-        }
+        $perPage = (int) ($request->per_page ?? 10);
+        $page = (int) ($request->page ?? 1);
 
-        // Filter by specific bulk assignment (rute)
-        if ($request->bulk_assignment_id) {
-            $query->where('ba.id', $request->bulk_assignment_id);
-        }
+        $baseQuery = $applyFilters(DB::table('bulk_assignments as ba'));
+        $totalRoutes = (clone $baseQuery)->count();
 
-        // Date range filter
-        if ($request->date_from) {
-            $query->whereDate('ba.assigned_at', '>=', $request->date_from);
-        }
-        if ($request->date_to) {
-            $query->whereDate('ba.assigned_at', '<=', $request->date_to);
-        }
+        $query = $applyFilters(
+            DB::table('bulk_assignments as ba')
+                ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+                ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
+                ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+                ->select([
+                    'ba.id as bulk_assignment_id',
+                    'ba.shipment_count',
+                    'ba.shipment_ids',
+                    'ba.assigned_at',
+                    'admin.name as admin_name',
+                    'driver.id as driver_id',
+                    'driver.name as driver_name',
+                    'vt.name as vehicle_type_name'
+                ])
+        );
 
-        $bulkAssignments = $query->orderBy('ba.assigned_at', 'desc')->get();
+        $bulkAssignments = $query
+            ->orderBy('ba.assigned_at', 'desc')
+            ->forPage($page, $perPage)
+            ->get();
+
+        // Overall stats & summaries are computed via a single aggregate query over
+        // ALL bulk assignments matching the filters (not just the current page),
+        // so pagination doesn't skew totals shown alongside the paged route list.
+        $overallStats = $this->calculateRouteReportOverallStats($applyFilters(DB::table('bulk_assignments as ba')));
 
         $routeReports = [];
-        $overallStats = [
-            'total_routes' => 0,
-            'total_shipments' => 0,
-            'completed_routes' => 0,
-            'avg_route_completion_time' => 0,
-        ];
+
+        // Fetch shipments for every bulk assignment on this page in a single query
+        // (grouped in-memory below) instead of one query per bulk assignment.
+        $allShipmentIds = [];
+        foreach ($bulkAssignments as $bulkAssignment) {
+            $allShipmentIds = array_merge($allShipmentIds, json_decode($bulkAssignment->shipment_ids));
+        }
+
+        $shipmentsById = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator', 'category', 'tugasPengiriman'])
+            ->whereIn('id', array_unique($allShipmentIds))
+            ->get()
+            ->keyBy('id');
 
         foreach ($bulkAssignments as $bulkAssignment) {
             $shipmentIds = json_decode($bulkAssignment->shipment_ids);
-            
-            // Get shipments with their destinations and progress
-            $shipments = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator', 'category', 'tugasPengiriman'])
-                ->whereIn('id', $shipmentIds)
-                ->get();
+
+            $shipments = $shipmentsById->only($shipmentIds)->values();
 
             $routeData = [
                 'route_info' => [
@@ -1122,25 +1141,6 @@ class ShipmentProgressController extends Controller
             }
 
             $routeReports[] = $routeData;
-
-            // Update overall stats
-            $overallStats['total_routes']++;
-            $overallStats['total_shipments'] += count($shipmentIds);
-            if ($completedShipments === count($shipmentIds)) {
-                $overallStats['completed_routes']++;
-            }
-        }
-
-        // Calculate overall average route completion time
-        $allRouteTimes = [];
-        foreach ($routeReports as $route) {
-            if (isset($route['route_summary']['total_route_time']['minutes'])) {
-                $allRouteTimes[] = $route['route_summary']['total_route_time']['minutes'];
-            }
-        }
-        
-        if (!empty($allRouteTimes)) {
-            $overallStats['avg_route_completion_time'] = round(array_sum($allRouteTimes) / count($allRouteTimes), 2);
         }
 
         return response()->json([
@@ -1151,8 +1151,311 @@ class ShipmentProgressController extends Controller
                     'from' => $request->date_from ?? 'Semua waktu',
                     'to' => $request->date_to ?? 'Semua waktu',
                 ],
+                'pagination' => [
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => $totalRoutes,
+                    'last_page' => $totalRoutes > 0 ? (int) ceil($totalRoutes / $perPage) : 1,
+                ],
             ],
         ]);
+    }
+
+    /**
+     * Lightweight summary for dashboard widgets (category/tugas breakdown, driver
+     * ranking) that previously derived these from the full, unpaginated
+     * getDriverRouteReport() payload. Aggregates via SQL instead of pulling every
+     * shipment/destination/progress row into PHP.
+     */
+    public function getDriverRouteReportSummary(Request $request): JsonResponse
+    {
+        $request->validate([
+            'driver_id' => 'nullable|exists:users,id',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $bulkQuery = DB::table('bulk_assignments as ba');
+        if ($request->driver_id) {
+            $bulkQuery->where('ba.driver_id', $request->driver_id);
+        }
+        if ($request->date_from) {
+            $bulkQuery->whereDate('ba.assigned_at', '>=', $request->date_from);
+        }
+        if ($request->date_to) {
+            $bulkQuery->whereDate('ba.assigned_at', '<=', $request->date_to);
+        }
+
+        $shipmentIds = [];
+        foreach ($bulkQuery->pluck('ba.shipment_ids') as $rawIds) {
+            $shipmentIds = array_merge($shipmentIds, json_decode($rawIds) ?? []);
+        }
+        $shipmentIds = array_unique($shipmentIds);
+
+        if (empty($shipmentIds)) {
+            return response()->json([
+                'data' => [
+                    'category_counts' => [],
+                    'tugas_counts' => [],
+                    'driver_ranking' => [],
+                ],
+            ]);
+        }
+
+        $categoryCounts = DB::table('shipments as s')
+            ->join('shipment_categories as sc', 's.category_id', '=', 'sc.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('sc.name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('sc.name')
+            ->orderByDesc('total')
+            ->get();
+
+        $tugasCounts = DB::table('shipments as s')
+            ->join('tugas_pengiriman as tp', 's.tugas_pengiriman_id', '=', 'tp.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('tp.tugas as name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('tp.tugas')
+            ->orderByDesc('total')
+            ->get();
+
+        $driverRanking = DB::table('shipments as s')
+            ->join('users as u', 's.assigned_driver_id', '=', 'u.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('u.id', 'u.name')
+            ->selectRaw('count(*) as total_shipments')
+            ->groupBy('u.id', 'u.name')
+            ->orderByDesc('total_shipments')
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'category_counts' => $categoryCounts,
+                'tugas_counts' => $tugasCounts,
+                'driver_ranking' => $driverRanking,
+            ],
+        ]);
+    }
+
+    /**
+     * Monthly delivery-time accumulation (durasi/jeda/waktu pulang/efisiensi/total
+     * tujuan) for the "Analisa Waktu Pengiriman Driver" widget's monthly view,
+     * broken down per driver per month (not merged across drivers).
+     * Replays the same per-route timing logic as the frontend's AnalisaDriver table
+     * (departure = picked ?? in_progress; jeda = gap since previous stop's end;
+     * waktu pulang = returning → finished) but only returns the summed totals per
+     * driver/month instead of every destination row, so this stays cheap regardless
+     * of how many months are requested.
+     */
+    public function getDriverTimingSummary(Request $request): JsonResponse
+    {
+        $request->validate([
+            'driver_id' => 'nullable|exists:users,id',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $query = DB::table('bulk_assignments as ba')
+            ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
+            ->select(['ba.id', 'ba.shipment_ids', 'ba.assigned_at', 'ba.driver_id', 'driver.name as driver_name']);
+        if ($request->driver_id) {
+            $query->where('ba.driver_id', $request->driver_id);
+        }
+        if ($request->date_from) {
+            $query->whereDate('ba.assigned_at', '>=', $request->date_from);
+        }
+        if ($request->date_to) {
+            $query->whereDate('ba.assigned_at', '<=', $request->date_to);
+        }
+
+        $bulkAssignments = $query->orderBy('ba.assigned_at')->get();
+
+        if ($bulkAssignments->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $allShipmentIds = [];
+        foreach ($bulkAssignments as $bulk) {
+            $allShipmentIds = array_merge($allShipmentIds, json_decode($bulk->shipment_ids) ?? []);
+        }
+
+        $shipmentsById = Shipment::with(['destinations.progress', 'destinations.statusHistories'])
+            ->whereIn('id', array_unique($allShipmentIds))
+            ->get()
+            ->keyBy('id');
+
+        // "{driver_id}|{Y-m}" => running totals, so each driver's months stay separate.
+        $groups = [];
+
+        foreach ($bulkAssignments as $bulk) {
+            $monthKey = \Carbon\Carbon::parse($bulk->assigned_at)->format('Y-m');
+            $groupKey = $bulk->driver_id . '|' . $monthKey;
+            $groups[$groupKey] ??= [
+                'driver_id' => $bulk->driver_id,
+                'driver_name' => $bulk->driver_name,
+                'month' => $monthKey,
+                'total_durasi' => 0,
+                'total_waiting' => 0,
+                'total_waktu_pulang' => 0,
+                'total_destinations' => 0,
+                'routes' => 0,
+            ];
+
+            $shipmentIds = json_decode($bulk->shipment_ids) ?? [];
+            $shipments = $shipmentsById->only($shipmentIds)->values();
+
+            // Flatten destinations across all shipments in this route, timed via the
+            // same analyzeRouteDestinationTiming() helper the detailed table uses.
+            $allDests = [];
+            foreach ($shipments as $shipment) {
+                foreach ($shipment->destinations as $destination) {
+                    $timing = $this->analyzeRouteDestinationTiming($destination);
+                    $allDests[] = [
+                        'departure' => $timing['pickup_time'] ?? null,
+                        'timestamps' => $timing['timestamps'] ?? [],
+                        'delivery_time_minutes' => $timing['delivery_time_minutes'] ?? null,
+                    ];
+                }
+            }
+
+            // Sort by departure time asc; un-started destinations go last (mirrors
+            // the frontend's Infinity fallback).
+            usort($allDests, function ($a, $b) {
+                $ta = $a['departure'] ? $a['departure']->timestamp : PHP_INT_MAX;
+                $tb = $b['departure'] ? $b['departure']->timestamp : PHP_INT_MAX;
+                return $ta <=> $tb;
+            });
+
+            $prevEnd = null;
+            $minutesBetween = function ($prev, $next) {
+                if (!$prev || !$next) {
+                    return null;
+                }
+                $diff = (strtotime($next) - strtotime($prev)) / 60;
+                return $diff > 0 ? (int) round($diff) : null;
+            };
+
+            foreach ($allDests as $item) {
+                $ts = $item['timestamps'];
+                $dep = $ts['picked'] ?? $ts['in_progress'] ?? null;
+                $durasi = $item['delivery_time_minutes'];
+
+                $waiting = $prevEnd !== null
+                    ? $minutesBetween($prevEnd, $dep)
+                    : $minutesBetween($ts['delivered'] ?? null, $ts['returning'] ?? null);
+                $waktuPulang = $minutesBetween($ts['returning'] ?? null, $ts['finished'] ?? null);
+
+                if ($durasi !== null) $groups[$groupKey]['total_durasi'] += $durasi;
+                if ($waiting !== null) $groups[$groupKey]['total_waiting'] += $waiting;
+                if ($waktuPulang !== null) $groups[$groupKey]['total_waktu_pulang'] += $waktuPulang;
+                $groups[$groupKey]['total_destinations']++;
+
+                $prevEnd = $ts['finished'] ?? $ts['returning'] ?? $ts['delivered'] ?? $ts['in_progress'] ?? $ts['picked'] ?? null;
+            }
+
+            $groups[$groupKey]['routes']++;
+        }
+
+        $result = [];
+        foreach ($groups as $totals) {
+            $efficiency = ($totals['total_durasi'] + $totals['total_waiting']) > 0
+                ? round(($totals['total_durasi'] / ($totals['total_durasi'] + $totals['total_waiting'])) * 100)
+                : null;
+
+            $result[] = [
+                'driver_id' => $totals['driver_id'],
+                'driver_name' => $totals['driver_name'],
+                'month' => $totals['month'],
+                'total_durasi' => $totals['total_durasi'],
+                'total_waiting' => $totals['total_waiting'],
+                'total_waktu_pulang' => $totals['total_waktu_pulang'],
+                'total_destinations' => $totals['total_destinations'],
+                'routes' => $totals['routes'],
+                'efficiency' => $efficiency,
+            ];
+        }
+
+        usort($result, function ($a, $b) {
+            return [$b['month'], $a['driver_name']] <=> [$a['month'], $b['driver_name']];
+        });
+
+        return response()->json(['data' => $result]);
+    }
+
+    /**
+     * Aggregate route stats (total routes/shipments, completed routes, avg completion
+     * time) via SQL over all matching bulk assignments — avoids loading full shipment
+     * graphs into memory just to count them.
+     */
+    private function calculateRouteReportOverallStats($bulkAssignmentQuery): array
+    {
+        $totalRoutes = (clone $bulkAssignmentQuery)->count();
+        $totalShipments = (int) (clone $bulkAssignmentQuery)->sum('shipment_count');
+
+        $bulkAssignmentIds = (clone $bulkAssignmentQuery)->pluck('ba.id');
+
+        $completedRoutes = 0;
+        $allRouteTimes = [];
+
+        if ($bulkAssignmentIds->isNotEmpty()) {
+            // Route completion is derived from shipment status, which isn't stored
+            // per-bulk-assignment — chunk ids to keep the IN() clause bounded.
+            foreach ($bulkAssignmentIds->chunk(200) as $idsChunk) {
+                $rows = DB::table('bulk_assignments as ba')
+                    ->whereIn('ba.id', $idsChunk)
+                    ->select(['ba.id', 'ba.shipment_ids'])
+                    ->get();
+
+                foreach ($rows as $row) {
+                    $shipmentIds = json_decode($row->shipment_ids) ?? [];
+                    if (empty($shipmentIds)) {
+                        continue;
+                    }
+
+                    $completedCount = Shipment::whereIn('id', $shipmentIds)
+                        ->where('status', 'completed')
+                        ->count();
+
+                    if ($completedCount === count($shipmentIds)) {
+                        $completedRoutes++;
+                    }
+
+                    // Mirrors analyzeRouteDestinationTiming()'s fallback logic: route start
+                    // is "picked" time, falling back to "in_progress"; route end is
+                    // "delivered" time, falling back to "finished".
+                    $timing = DB::table('shipment_progress as sp')
+                        ->whereIn('sp.shipment_id', $shipmentIds)
+                        ->selectRaw(
+                            "COALESCE(" .
+                            "MIN(CASE WHEN sp.status = 'picked' THEN sp.progress_time END), " .
+                            "MIN(CASE WHEN sp.status = 'in_progress' THEN sp.progress_time END)" .
+                            ") as start_time, " .
+                            "COALESCE(" .
+                            "MAX(CASE WHEN sp.status = 'delivered' THEN sp.progress_time END), " .
+                            "MAX(CASE WHEN sp.status = 'finished' THEN sp.progress_time END)" .
+                            ") as end_time"
+                        )
+                        ->first();
+
+                    if ($timing && $timing->start_time && $timing->end_time) {
+                        $minutes = (strtotime($timing->end_time) - strtotime($timing->start_time)) / 60;
+                        if ($minutes >= 0) {
+                            $allRouteTimes[] = $minutes;
+                        }
+                    }
+                }
+            }
+        }
+
+        return [
+            'total_routes' => $totalRoutes,
+            'total_shipments' => $totalShipments,
+            'completed_routes' => $completedRoutes,
+            'avg_route_completion_time' => !empty($allRouteTimes)
+                ? round(array_sum($allRouteTimes) / count($allRouteTimes), 2)
+                : 0,
+        ];
     }
 
     private function analyzeRouteDestinationTiming($destination): ?array
