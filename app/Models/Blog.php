@@ -61,8 +61,8 @@ class Blog extends Model
      */
     public function scopeForRole($query, $userRole)
     {
-        if ($userRole === 'Admin') {
-            return $query; // Admin bisa melihat semua
+        if (in_array($userRole, ['Admin', 'Super Admin'])) {
+            return $query; // Admin & Super Admin bisa melihat semua
         }
         
         $allowedAudiences = ['all'];

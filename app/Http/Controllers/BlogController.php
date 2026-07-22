@@ -75,7 +75,13 @@ class BlogController extends Controller
     public function apiIndex()
     {
         $user = auth()->user();
-        $userRole = $user->roles->first()->name ?? 'User';
+
+        if ($user && $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            $blogs = Blog::with('user')->latest()->paginate(10);
+            return response()->json($blogs);
+        }
+
+        $userRole = $user ? ($user->roles->first()->name ?? 'User') : 'User';
         
         // Menggunakan scope untuk filter berdasarkan role
         $blogs = Blog::with('user')
