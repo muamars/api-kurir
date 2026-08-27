@@ -49,14 +49,14 @@ class StoreShipmentRequest extends FormRequest
             'destinations' => 'required|array|min:1',
             'destinations.*.receiver_company' => 'required|string|max:255',
             'destinations.*.receiver_name' => 'required|string|max:255',
-            'destinations.*.receiver_contact' => 'required|string|max:20',
+            'destinations.*.receiver_contact' => 'nullable|string|max:50',
             'destinations.*.delivery_address' => 'required|string',
             'destinations.*.shipment_note' => 'nullable|string',
 
             'items' => 'required|array|min:1',
-            'items.*.no_referensi' => 'required|string|max:255',
+            'items.*.no_referensi' => 'nullable|string|max:255',
             'items.*.item_name' => 'required|string|max:255',
-            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.quantity' => 'nullable|integer',
             'items.*.description' => 'nullable|string',
         ];
 

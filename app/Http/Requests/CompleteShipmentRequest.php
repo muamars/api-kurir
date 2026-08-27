@@ -15,6 +15,24 @@ class CompleteShipmentRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        $url = $this->online_tracking_url;
+        if (is_string($url)) {
+            $url = trim($url);
+            if ($url === '' || strtolower($url) === 'null' || strtolower($url) === 'undefined') {
+                $url = null;
+            }
+        }
+
+        $this->merge([
+            'online_tracking_url' => $url,
+        ]);
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
@@ -27,7 +45,7 @@ class CompleteShipmentRequest extends FormRequest
             'shipping_cost' => 'required|integer|min:0',
             'vehicle_used' => 'required|string|max:255',
             'completion_photo' => 'nullable|image|mimes:jpeg,png,jpg|max:5120', // 5MB max
-            'online_tracking_url' => 'nullable|url|max:2048',
+            'online_tracking_url' => 'nullable|string|max:2048',
         ];
     }
 

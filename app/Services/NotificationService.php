@@ -32,6 +32,11 @@ class NotificationService
 
     public function shipmentAssigned(Shipment $shipment): void
     {
+        $shipment->loadMissing('destinations');
+        $firstDest = $shipment->destinations->first();
+        $destAddress = $firstDest?->delivery_address;
+        $destCompany = $firstDest?->receiver_company ?? $firstDest?->receiver_name;
+
         if ($shipment->driver) {
             Notification::create([
                 'user_id' => $shipment->assigned_driver_id,
@@ -43,6 +48,8 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'priority' => $shipment->priority,
                     'destinations_count' => $shipment->destinations->count(),
+                    'destination_company' => $destCompany,
+                    'destination_address' => $destAddress,
                 ],
             ]);
         }
@@ -60,6 +67,8 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'driver' => $driverName,
                     'driver_phone' => $driverPhone,
+                    'destination_company' => $destCompany,
+                    'destination_address' => $destAddress,
                 ],
             ]);
         }
@@ -67,6 +76,11 @@ class NotificationService
 
     public function shipmentPending(Shipment $shipment): void
     {
+        $shipment->loadMissing('destinations');
+        $firstDest = $shipment->destinations->first();
+        $destAddress = $firstDest?->delivery_address;
+        $destCompany = $firstDest?->receiver_company ?? $firstDest?->receiver_name;
+
         if ($shipment->driver) {
             Notification::create([
                 'user_id' => $shipment->assigned_driver_id,
@@ -78,28 +92,33 @@ class NotificationService
                     'shipment_number' => $shipment->shipment_id,
                     'priority' => $shipment->priority,
                     'destinations_count' => $shipment->destinations->count(),
+                    'destination_company' => $destCompany,
+                    'destination_address' => $destAddress,
                     'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d'),
                 ],
             ]);
         }
 
-        $message = $shipment->driver
-            ? "Kurir {$shipment->driver->name} telah ditugaskan untuk pengiriman {$shipment->shipment_id} (menunggu persetujuan)"
-            : "Pengiriman {$shipment->shipment_id} sedang menunggu persetujuan admin";
 
-        Notification::create([
-            'user_id' => $shipment->created_by,
-            'type' => 'driver_pending',
-            'title' => 'Pengiriman Menunggu Persetujuan',
-            'message' => $message,
-            'data' => [
-                'shipment_id' => $shipment->id,
-                'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver?->name,
-                'driver_phone' => $shipment->driver?->phone,
-                'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d H:i:s'),
-            ],
-        ]);
+        if ($shipment->created_by) {
+            $message = $shipment->driver
+                ? "Kurir {$shipment->driver->name} telah ditugaskan untuk pengiriman {$shipment->shipment_id} (menunggu persetujuan)"
+                : "Pengiriman {$shipment->shipment_id} sedang menunggu persetujuan admin";
+
+            Notification::create([
+                'user_id' => $shipment->created_by,
+                'type' => 'driver_pending',
+                'title' => 'Pengiriman Menunggu Persetujuan',
+                'message' => $message,
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'driver' => $shipment->driver?->name,
+                    'driver_phone' => $shipment->driver?->phone,
+                    'deadline' => $shipment->scheduled_delivery_datetime?->format('Y-m-d H:i:s'),
+                ],
+            ]);
+        }
     }
 
     public function deliveryStarted(Shipment $shipment): void
@@ -247,19 +266,21 @@ class NotificationService
 
     public function shipmentTakeover(Shipment $shipment, string $reason): void
     {
-        Notification::create([
-            'user_id' => $shipment->created_by,
-            'type' => 'shipment_takeover',
-            'title' => 'Pengiriman Dikembalikan oleh Kurir',
-            'message' => "Pengiriman {$shipment->shipment_id} dikembalikan ke admin oleh kurir. Alasan: {$reason}",
-            'data' => [
-                'shipment_id' => $shipment->id,
-                'shipment_number' => $shipment->shipment_id,
-                'driver' => $shipment->driver?->name,
-                'reason' => $reason,
-                'takeover_at' => now()->format('Y-m-d H:i:s'),
-            ],
-        ]);
+        if ($shipment->created_by) {
+            Notification::create([
+                'user_id' => $shipment->created_by,
+                'type' => 'shipment_takeover',
+                'title' => 'Pengiriman Dikembalikan oleh Kurir',
+                'message' => "Pengiriman {$shipment->shipment_id} dikembalikan ke admin oleh kurir. Alasan: {$reason}",
+                'data' => [
+                    'shipment_id' => $shipment->id,
+                    'shipment_number' => $shipment->shipment_id,
+                    'driver' => $shipment->driver?->name,
+                    'reason' => $reason,
+                    'takeover_at' => now()->format('Y-m-d H:i:s'),
+                ],
+            ]);
+        }
 
         $admins = User::role('Admin')->where('is_active', true)->get();
         foreach ($admins as $admin) {

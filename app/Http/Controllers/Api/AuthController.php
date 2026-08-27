@@ -46,6 +46,8 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'phone' => $user->phone,
+                    'profile_photo' => $user->profile_photo,
+                    'profile_photo_url' => $user->profile_photo_url,
                     'is_active' => $user->is_active,
                     'division' => $user->division,
                     'roles' => $user->getRoleNames(),
@@ -75,11 +77,93 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'profile_photo' => $user->profile_photo,
+                'profile_photo_url' => $user->profile_photo_url,
                 'is_active' => $user->is_active,
                 'division' => $user->division,
                 'roles' => $user->getRoleNames(),
                 'permissions' => $user->getAllPermissions()->pluck('name'),
             ],
+        ]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email,'.$user->id,
+            'phone' => 'nullable|string|max:20',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+        ], [
+            'name.required' => 'Nama wajib diisi.',
+            'email.required' => 'Email wajib diisi.',
+            'email.email' => 'Format email tidak valid.',
+            'email.unique' => 'Email sudah digunakan.',
+            'profile_photo.image' => 'File harus berupa gambar.',
+            'profile_photo.max' => 'Ukuran gambar maksimal 2MB.',
+        ]);
+
+        $updateData = [
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'phone' => $validated['phone'] ?? null,
+        ];
+
+        if ($request->hasFile('profile_photo')) {
+            if ($user->profile_photo && \Illuminate\Support\Facades\Storage::disk('public')->exists($user->profile_photo)) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($user->profile_photo);
+            }
+            $updateData['profile_photo'] = $request->file('profile_photo')->store('profile_photos', 'public');
+        }
+
+        $user->update($updateData);
+
+        return response()->json([
+            'message' => 'Profil berhasil diperbarui',
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'profile_photo' => $user->profile_photo,
+                'profile_photo_url' => $user->profile_photo_url,
+                'is_active' => $user->is_active,
+                'division' => $user->division,
+                'roles' => $user->getRoleNames(),
+            ],
+        ]);
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = $request->user();
+
+        $request->validate([
+            'current_password' => 'required',
+            'password' => 'required|string|min:6|confirmed',
+        ], [
+            'current_password.required' => 'Password saat ini wajib diisi.',
+            'password.required' => 'Password baru wajib diisi.',
+            'password.min' => 'Password baru minimal 6 karakter.',
+            'password.confirmed' => 'Konfirmasi password baru tidak cocok.',
+        ]);
+
+        if (! \Illuminate\Support\Facades\Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'message' => 'Password saat ini salah.',
+            ], 422);
+        }
+
+        $user->update([
+            'password' => \Illuminate\Support\Facades\Hash::make($request->password),
+        ]);
+
+        return response()->json([
+            'message' => 'Password berhasil diperbarui',
         ]);
     }
 

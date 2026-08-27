@@ -78,6 +78,19 @@ class DashboardController extends Controller
     {
         foreach (array_unique(array_filter($userIds)) as $id) {
             Cache::forget("dashboard.index.{$id}");
+            $today = Carbon::now()->format('Y-m-d');
+            $threeMonthsAgo = Carbon::now()->subMonths(3)->format('Y-m-d');
+            Cache::forget("dashboard.index.{$id}.{$threeMonthsAgo}.{$today}");
+
+            try {
+                if (config('cache.default') === 'redis') {
+                    $keys = \Illuminate\Support\Facades\Redis::keys("*dashboard.index.{$id}*");
+                    foreach ($keys as $key) {
+                        \Illuminate\Support\Facades\Redis::del($key);
+                    }
+                }
+            } catch (\Throwable $e) {}
+
             foreach (['week', 'month', 'year'] as $period) {
                 Cache::forget("dashboard.chart.{$id}.{$period}");
             }
@@ -86,82 +99,99 @@ class DashboardController extends Controller
 
     private function getPrivateShipmentStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
-        // ✅ PRIVATE DASHBOARD: Data berbeda berdasarkan role user
-        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
-            // Admin melihat semua shipment
-            $query = Shipment::query();
-        } elseif ($user->hasRole('Kurir')) {
-            // Kurir hanya melihat shipment yang assigned ke mereka
-            $query = Shipment::where('assigned_driver_id', $user->id);
-        } else {
-            // User biasa hanya melihat shipment yang mereka buat
-            $query = Shipment::where('created_by', $user->id);
+        $todayStr = today()->format('Y-m-d');
+
+        $query = Shipment::query()
+            ->whereBetween('created_at', [$dateFrom, $dateTo]);
+
+        if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            if ($user->hasRole('Kurir')) {
+                $query->where('assigned_driver_id', $user->id);
+            } else {
+                $query->where('created_by', $user->id);
+            }
         }
 
-        $query->whereBetween('created_at', [$dateFrom, $dateTo]);
+        $res = $query->selectRaw("
+            COUNT(*) as total,
+            SUM(CASE WHEN DATE(created_at) = ? THEN 1 ELSE 0 END) as today,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'assigned' THEN 1 ELSE 0 END) as assigned,
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+            SUM(CASE WHEN priority = 'urgent' THEN 1 ELSE 0 END) as urgent
+        ", [$todayStr])->first();
 
         return [
-            'total' => $query->count(),
-            'today' => $query->clone()->whereDate('created_at', today())->count(),
-            'pending' => $query->clone()->where('status', 'pending')->count(),
-            'approved' => $query->clone()->where('status', 'approved')->count(),
-            'assigned' => $query->clone()->where('status', 'assigned')->count(),
-            'in_progress' => $query->clone()->where('status', 'in_progress')->count(),
-            'completed' => $query->clone()->where('status', 'completed')->count(),
-            'cancelled' => $query->clone()->where('status', 'cancelled')->count(),
-            'urgent' => $query->clone()->where('priority', 'urgent')->count(),
+            'total' => (int) ($res->total ?? 0),
+            'today' => (int) ($res->today ?? 0),
+            'pending' => (int) ($res->pending ?? 0),
+            'approved' => (int) ($res->approved ?? 0),
+            'assigned' => (int) ($res->assigned ?? 0),
+            'in_progress' => (int) ($res->in_progress ?? 0),
+            'completed' => (int) ($res->completed ?? 0),
+            'cancelled' => (int) ($res->cancelled ?? 0),
+            'urgent' => (int) ($res->urgent ?? 0),
         ];
     }
 
     private function getPrivateDeliveryStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
-        $today = now()->startOfDay();
-        $thisWeek = now()->startOfWeek();
-        $thisMonth = now()->startOfMonth();
+        $todayStr = now()->startOfDay()->format('Y-m-d H:i:s');
+        $thisWeekStr = now()->startOfWeek()->format('Y-m-d H:i:s');
+        $thisMonthStr = now()->startOfMonth()->format('Y-m-d H:i:s');
 
-        // ✅ PRIVATE DASHBOARD: Data delivery berbeda berdasarkan role user
-        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
-            // Admin melihat semua delivery
-            $query = Shipment::query();
-        } elseif ($user->hasRole('Kurir')) {
-            // Kurir hanya melihat delivery yang mereka handle
-            $query = Shipment::where('assigned_driver_id', $user->id);
-        } else {
-            // User biasa hanya melihat delivery shipment mereka
-            $query = Shipment::where('created_by', $user->id);
-        }
-
-        $query->where('status', 'completed')
+        $query = Shipment::query()
+            ->where('status', 'completed')
             ->whereBetween('updated_at', [$dateFrom, $dateTo]);
 
+        if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            if ($user->hasRole('Kurir')) {
+                $query->where('assigned_driver_id', $user->id);
+            } else {
+                $query->where('created_by', $user->id);
+            }
+        }
+
+        $res = $query->selectRaw("
+            SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) as today,
+            SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) as this_week,
+            SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) as this_month,
+            COUNT(*) as in_range
+        ", [$todayStr, $thisWeekStr, $thisMonthStr])->first();
+
         return [
-            'today' => $query->clone()->whereDate('updated_at', $today)->count(),
-            'this_week' => $query->clone()->where('updated_at', '>=', $thisWeek)->count(),
-            'this_month' => $query->clone()->where('updated_at', '>=', $thisMonth)->count(),
-            'in_range' => $query->count(),
+            'today' => (int) ($res->today ?? 0),
+            'this_week' => (int) ($res->this_week ?? 0),
+            'this_month' => (int) ($res->this_month ?? 0),
+            'in_range' => (int) ($res->in_range ?? 0),
         ];
     }
 
     private function getPrivatePerformanceStats($user, Carbon $dateFrom, Carbon $dateTo): array
     {
-        // ✅ PRIVATE DASHBOARD: Data performa berbeda berdasarkan role user
-        if ($user->hasAnyRole(['Admin', 'Super Admin'])) {
-            // Admin melihat performa keseluruhan sistem
-            $query = Shipment::query();
-        } elseif ($user->hasRole('Kurir')) {
-            // Kurir melihat performa mereka sendiri
-            $query = Shipment::where('assigned_driver_id', $user->id);
-        } else {
-            // User biasa melihat performa shipment mereka
-            $query = Shipment::where('created_by', $user->id);
+        $query = Shipment::query()
+            ->whereBetween('updated_at', [$dateFrom, $dateTo]);
+
+        if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            if ($user->hasRole('Kurir')) {
+                $query->where('assigned_driver_id', $user->id);
+            } else {
+                $query->where('created_by', $user->id);
+            }
         }
 
-        $query->whereBetween('updated_at', [$dateFrom, $dateTo]);
+        $res = $query->selectRaw("
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'completed' AND deadline IS NOT NULL AND updated_at <= deadline THEN 1 ELSE 0 END) as on_time
+        ")->first();
 
-        $total = $query->count();
-        $completed = $query->clone()->where('status', 'completed')->count();
-        $onTime = $query->clone()->where('status', 'completed')
-            ->whereRaw('updated_at <= deadline')->count();
+        $total = (int) ($res->total ?? 0);
+        $completed = (int) ($res->completed ?? 0);
+        $onTime = (int) ($res->on_time ?? 0);
 
         return [
             'completion_rate' => $total > 0 ? round(($completed / $total) * 100, 2) : 0,
@@ -856,7 +886,7 @@ class DashboardController extends Controller
                 'driver:id,name,email',
                 'category:id,name',
                 'vehicleType:id,name',
-                'destinations:id,shipment_id,delivery_address,receiver_name,status'
+                'destinations:id,shipment_id,delivery_address,receiver_name,receiver_company,status'
             ]);
 
             // ✅ AUTO-HIDE COMPLETED & CANCELLED: Secara default sembunyikan tiket completed dan cancelled
@@ -963,6 +993,7 @@ class DashboardController extends Controller
                             'id' => $dest->id,
                             'delivery_address' => $dest->delivery_address,
                             'receiver_name' => $dest->receiver_name,
+                            'receiver_company' => $dest->receiver_company ?? '',
                             'status' => $dest->status,
                             'status_label' => $this->getDestinationStatusLabel($dest->status),
                         ];
@@ -1219,7 +1250,9 @@ class DashboardController extends Controller
     private function applyDateFilterForReport($query, $request): void
     {
         if ($request->date_from && $request->date_to) {
-            $query->whereBetween('completed_at', [$request->date_from, $request->date_to]);
+            $from = \Carbon\Carbon::parse($request->date_from)->startOfDay();
+            $to   = \Carbon\Carbon::parse($request->date_to)->endOfDay();
+            $query->whereBetween('completed_at', [$from, $to]);
         } elseif ($request->period) {
             switch ($request->period) {
                 case 'today':

@@ -217,6 +217,9 @@ class ShipmentProgressController extends Controller
             // ✅ NEW: Auto-update shipment status based on destination progress
             $this->updateShipmentStatusBasedOnDestinations($shipment);
 
+            // ✅ Invalidate dashboard cache so driver and admin stats update instantly
+            DashboardController::invalidateFor([$shipment->created_by, $shipment->assigned_driver_id, auth()->id()]);
+
             // === Handle status DELIVERED: kirim notifikasi ===
             if ($request->status === 'delivered') {
                 try {
@@ -891,9 +894,9 @@ class ShipmentProgressController extends Controller
 
     private function analyzeDestinationDeliveryTime($destination): ?array
     {
-        $histories = $destination->statusHistories()
-            ->orderBy('changed_at', 'asc')
-            ->get();
+        $histories = $destination->relationLoaded('statusHistories')
+            ? $destination->statusHistories->sortBy('changed_at')
+            : $destination->statusHistories()->orderBy('changed_at', 'asc')->get();
 
         if ($histories->isEmpty()) {
             return null;

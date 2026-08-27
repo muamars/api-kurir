@@ -7,7 +7,7 @@
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 
-</body> --}}
+</body> 
 
 <body class="bg-white">
     <div class="mx-auto my-0 min-h-full  max-w-[495px]">

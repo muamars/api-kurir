@@ -11,6 +11,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 
 class UserController extends Controller
 {
@@ -19,7 +20,7 @@ class UserController extends Controller
         $drivers = User::role('Kurir')
             ->where('is_active', true)
             ->with(['division:id,name,description'])
-            ->get(['id', 'name', 'phone', 'division_id']);
+            ->get(['id', 'name', 'phone', 'profile_photo', 'division_id']);
 
         return response()->json([
             'data' => $drivers,
@@ -34,7 +35,7 @@ class UserController extends Controller
                 $q->whereIn('status', ['assigned', 'in_progress']);
             })
             ->with(['division:id,name,description'])
-            ->get(['id', 'name', 'phone', 'division_id']);
+            ->get(['id', 'name', 'phone', 'profile_photo', 'division_id']);
 
         return response()->json([
             'data' => $drivers,
@@ -64,7 +65,7 @@ class UserController extends Controller
             $query->where('is_active', filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN));
         }
 
-        $users = $query->get(['id', 'name', 'email', 'phone', 'division_id', 'is_active']);
+        $users = $query->get(['id', 'name', 'email', 'phone', 'profile_photo', 'division_id', 'is_active']);
 
         return response()->json([
             'data' => $users,
@@ -75,11 +76,17 @@ class UserController extends Controller
     {
         $validated = $request->validated();
 
+        $photoPath = null;
+        if ($request->hasFile('profile_photo')) {
+            $photoPath = $request->file('profile_photo')->store('profile_photos', 'public');
+        }
+
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'phone' => $validated['phone'] ?? null,
+            'profile_photo' => $photoPath,
             'division_id' => $validated['division_id'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
         ]);
@@ -113,6 +120,13 @@ class UserController extends Controller
             'division_id' => $validated['division_id'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
         ];
+
+        if ($request->hasFile('profile_photo')) {
+            if ($user->profile_photo && Storage::disk('public')->exists($user->profile_photo)) {
+                Storage::disk('public')->delete($user->profile_photo);
+            }
+            $updateData['profile_photo'] = $request->file('profile_photo')->store('profile_photos', 'public');
+        }
 
         // Only update password if provided
         if (! empty($validated['password'])) {
@@ -152,6 +166,9 @@ class UserController extends Controller
         }
 
         try {
+            if ($user->profile_photo && Storage::disk('public')->exists($user->profile_photo)) {
+                Storage::disk('public')->delete($user->profile_photo);
+            }
             $user->delete();
         } catch (QueryException $e) {
             if ($e->getCode() === '23000') {

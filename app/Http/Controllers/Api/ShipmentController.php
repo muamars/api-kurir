@@ -21,7 +21,7 @@ class ShipmentController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Shipment::with(['creator', 'approver', 'driver', 'destinations', 'items', 'category', 'vehicleType']);
+        $query = Shipment::with(['creator.division', 'approver', 'driver', 'destinations', 'items', 'category', 'vehicleType', 'division', 'photos']);
 
         // Filter by category
         if ($request->has('category_id')) {
@@ -61,11 +61,24 @@ class ShipmentController extends Controller
         }
 
         // Date range filter
-        if ($request->has('date_from')) {
-            $query->whereDate('created_at', '>=', $request->date_from);
+        $defaultDateBy = $request->status === 'completed' ? 'completed_at' : 'created_at';
+        $dateBy = in_array($request->get('date_by'), ['created_at', 'updated_at', 'scheduled_delivery_datetime', 'completed_at'])
+            ? $request->get('date_by')
+            : $defaultDateBy;
+
+        if ($request->filled('date_from')) {
+            if ($dateBy === 'completed_at') {
+                $query->whereDate(DB::raw('COALESCE(completed_at, updated_at)'), '>=', $request->date_from);
+            } else {
+                $query->whereDate($dateBy, '>=', $request->date_from);
+            }
         }
-        if ($request->has('date_to')) {
-            $query->whereDate('created_at', '<=', $request->date_to);
+        if ($request->filled('date_to')) {
+            if ($dateBy === 'completed_at') {
+                $query->whereDate(DB::raw('COALESCE(completed_at, updated_at)'), '<=', $request->date_to);
+            } else {
+                $query->whereDate($dateBy, '<=', $request->date_to);
+            }
         }
 
         // Search by shipment ID, receiver name, or delivery address
@@ -101,17 +114,20 @@ class ShipmentController extends Controller
         }
 
         // Sorting
-        $sortBy = $request->get('sort_by', 'created_at');
+        $defaultSortBy = $request->status === 'completed' ? 'completed_at' : 'created_at';
+        $sortBy = $request->get('sort_by', $defaultSortBy);
         $sortOrder = $request->get('sort_order', 'desc');
 
         if ($sortBy === 'priority') {
             $query->orderByRaw("CASE WHEN priority = 'urgent' THEN 0 ELSE 1 END ".$sortOrder);
+        } elseif ($sortBy === 'completed_at') {
+            $query->orderByRaw("COALESCE(completed_at, updated_at) ".$sortOrder);
         } else {
             $query->orderBy($sortBy, $sortOrder);
         }
 
         // Default secondary sort
-        if ($sortBy !== 'created_at') {
+        if ($sortBy !== 'created_at' && $sortBy !== 'completed_at') {
             $query->orderBy('created_at', 'desc');
         }
 
@@ -171,7 +187,7 @@ class ShipmentController extends Controller
                 $shipment->destinations()->create([
                     'receiver_company' => $destination['receiver_company'],
                     'receiver_name' => $destination['receiver_name'],
-                    'receiver_contact' => $destination['receiver_contact'],
+                    'receiver_contact' => !empty($destination['receiver_contact']) ? $destination['receiver_contact'] : '-',
                     'delivery_address' => $destination['delivery_address'],
                     'shipment_note' => $destination['shipment_note'] ?? null,
                     'sequence_order' => $index + 1,
@@ -181,9 +197,9 @@ class ShipmentController extends Controller
             // Create items
             foreach ($request->items as $item) {
                 $shipment->items()->create([
-                    'no_referensi' => $item['no_referensi'],
+                    'no_referensi' => !empty($item['no_referensi']) ? $item['no_referensi'] : '-',
                     'item_name' => $item['item_name'],
-                    'quantity' => $item['quantity'],
+                    'quantity' => !empty($item['quantity']) ? (int) $item['quantity'] : 1,
                     'description' => $item['description'] ?? null,
                 ]);
             }
@@ -212,7 +228,7 @@ class ShipmentController extends Controller
 
     public function show(Shipment $shipment): JsonResponse
     {
-        $shipment->load(['creator', 'approver', 'driver', 'destinations', 'items', 'progress.driver', 'category', 'vehicleType', 'division', 'tugasPengiriman']);
+        $shipment->load(['creator.division', 'approver', 'driver', 'destinations', 'items', 'progress.driver', 'category', 'vehicleType', 'division', 'tugasPengiriman']);
 
         return response()->json(new ShipmentResource($shipment));
     }
@@ -555,32 +571,43 @@ class ShipmentController extends Controller
 
     public function updateDeadline(Request $request, Shipment $shipment): JsonResponse
     {
-        // Hanya creator shipment yang bisa update deadline
-        if ($shipment->created_by !== auth()->id()) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        $user = auth()->user();
+
+        // Admin & Super Admin boleh update deadline kapan saja.
+        // Jika user biasa, harus merupakan creator dari shipment ini.
+        if (! $user->hasAnyRole(['Admin', 'Super Admin']) && $shipment->created_by !== $user->id) {
+            return response()->json(['message' => 'Anda tidak memiliki hak akses untuk mengubah deadline pengiriman ini.'], 403);
         }
 
-        if ($shipment->deadline_locked) {
-            return response()->json([
-                'message' => 'Deadline masih terkunci. Admin harus membuka reschedule terlebih dahulu.',
-            ], 403);
-        }
+        // Pengecekan deadline_locked & status pending hanya berlaku untuk user biasa (non-admin)
+        if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            if ($shipment->deadline_locked) {
+                return response()->json([
+                    'message' => 'Deadline masih terkunci. Admin harus membuka reschedule terlebih dahulu.',
+                ], 403);
+            }
 
-        if ($shipment->status !== 'pending') {
-            return response()->json([
-                'message' => 'Hanya shipment berstatus pending yang bisa diubah deadlinenya.',
-            ], 400);
+            if ($shipment->status !== 'pending') {
+                return response()->json([
+                    'message' => 'Hanya shipment berstatus pending yang bisa diubah deadlinenya.',
+                ], 400);
+            }
         }
 
         $request->validate([
-            'deadline'                     => 'required|date_format:Y-m-d H:i:s',
-            'scheduled_delivery_datetime'  => 'nullable|date_format:Y-m-d H:i:s',
+            'deadline'                     => 'required|date',
+            'scheduled_delivery_datetime'  => 'nullable|date',
         ]);
 
+        $deadlineFormatted = Carbon::parse($request->deadline)->format('Y-m-d H:i:s');
+        $scheduledFormatted = $request->scheduled_delivery_datetime
+            ? Carbon::parse($request->scheduled_delivery_datetime)->format('Y-m-d H:i:s')
+            : $deadlineFormatted;
+
         $shipment->update([
-            'deadline'                    => $request->deadline,
-            'scheduled_delivery_datetime' => $request->scheduled_delivery_datetime ?? $request->deadline,
-            'deadline_locked'             => true, // kunci kembali setelah user simpan
+            'deadline'                    => $deadlineFormatted,
+            'scheduled_delivery_datetime' => $scheduledFormatted,
+            'deadline_locked'             => true, // kunci kembali setelah simpan
         ]);
 
         return response()->json([
@@ -762,7 +789,7 @@ class ShipmentController extends Controller
                 
                 // Get shipments with current status - ONLY active shipments still assigned to this driver
                 $shipmentsQuery = Shipment::with([
-                    'destinations:id,shipment_id,delivery_address,receiver_name,receiver_contact,status',
+                    'destinations:id,shipment_id,delivery_address,receiver_name,receiver_company,receiver_contact,status',
                     'items:id,shipment_id,item_name,quantity',
                     'creator:id,name',
                     'category:id,name,description'
@@ -817,6 +844,7 @@ class ShipmentController extends Controller
                                 'id' => $dest->id,
                                 'delivery_address' => $dest->delivery_address,
                                 'receiver_name' => $dest->receiver_name,
+                                'receiver_company' => $dest->receiver_company ?? '',
                                 'receiver_contact' => $dest->receiver_contact ?? '',
                                 'current_status' => $dest->status,
                                 'status_label' => $this->getDestinationStatusLabel($dest->status),

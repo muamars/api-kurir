@@ -28,6 +28,7 @@ class UpdateUserRequest extends FormRequest
             'email' => ['required', 'email', \Illuminate\Validation\Rule::unique('users')->ignore($userId)],
             'password' => 'nullable|string|min:6|confirmed',
             'phone' => 'nullable|string|max:20',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             'division_id' => 'nullable|exists:divisions,id',
             'is_active' => 'boolean',
             'roles' => 'required|array|min:1',

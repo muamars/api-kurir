@@ -70,6 +70,21 @@ class Shipment extends Model
         'takeover_count'              => 'integer',
     ];
 
+    protected $appends = [
+        'proof_photo_url',
+    ];
+
+    public function getBulkAssignmentIdAttribute(): ?int
+    {
+        if (!$this->id) return null;
+        $bulkId = \Illuminate\Support\Facades\DB::table('bulk_assignments')
+            ->whereJsonContains('shipment_ids', (int) $this->id)
+            ->orWhereJsonContains('shipment_ids', (string) $this->id)
+            ->value('id');
+
+        return $bulkId ? (int) $bulkId : null;
+    }
+
     /**
      * Get the route key for the model.
      */
@@ -78,9 +93,44 @@ class Shipment extends Model
         return 'shipment_id';
     }
 
-    // tambahan baru
+    public function getProofPhotoUrlAttribute(): ?string
+    {
+        if ($this->relationLoaded('photos') && $this->photos->isNotEmpty()) {
+            $photo = $this->photos->first();
+            if ($photo && $photo->photo_url) {
+                return \Illuminate\Support\Str::startsWith($photo->photo_url, ['http://', 'https://'])
+                    ? $photo->photo_url
+                    : asset('storage/' . ltrim($photo->photo_url, '/'));
+            }
+        } else {
+            $photo = $this->photos()->first();
+            if ($photo && $photo->photo_url) {
+                return \Illuminate\Support\Str::startsWith($photo->photo_url, ['http://', 'https://'])
+                    ? $photo->photo_url
+                    : asset('storage/' . ltrim($photo->photo_url, '/'));
+            }
+        }
 
-    // batas
+        if ($this->surat_pengantar_kerja) {
+            return \Illuminate\Support\Str::startsWith($this->surat_pengantar_kerja, ['http://', 'https://'])
+                ? $this->surat_pengantar_kerja
+                : asset('storage/' . ltrim($this->surat_pengantar_kerja, '/'));
+        }
+
+        if ($this->attachment_path) {
+            return \Illuminate\Support\Str::startsWith($this->attachment_path, ['http://', 'https://'])
+                ? $this->attachment_path
+                : asset('storage/' . ltrim($this->attachment_path, '/'));
+        }
+
+        if ($this->completion_photo) {
+            return \Illuminate\Support\Str::startsWith($this->completion_photo, ['http://', 'https://'])
+                ? $this->completion_photo
+                : asset('storage/' . ltrim($this->completion_photo, '/'));
+        }
+
+        return null;
+    }
 
     public function creator(): BelongsTo
     {

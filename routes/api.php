@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Api\AuthController as ApiAuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DriverJourneyController;
 use App\Http\Controllers\Api\DivisionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PermissionController;
@@ -35,6 +36,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::prefix('v1')->group(function () {
         Route::post('/auth/logout', [ApiAuthController::class, 'logout']);
         Route::get('/auth/me', [ApiAuthController::class, 'me']);
+        Route::post('/auth/update-profile', [ApiAuthController::class, 'updateProfile']);
+        Route::post('/auth/change-password', [ApiAuthController::class, 'changePassword']);
 
         // Blog API Routes - Moved inside v1 prefix
         Route::middleware('permission:view blogs')->group(function () {
@@ -120,6 +123,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Dashboard
         Route::get('/dashboard', [DashboardController::class, 'index']);
+        Route::get('/dashboard/driver-journey/top-drivers', [DriverJourneyController::class, 'getTopDrivers']);
+        Route::get('/dashboard/driver-journey/analysis', [DriverJourneyController::class, 'getJourneyAnalysis']);
+        Route::get('/dashboard/driver-journey/online-logs', [DriverJourneyController::class, 'getDriverOnlineLogs']);
         Route::get('/dashboard/chart', [DashboardController::class, 'getChartData']);
         Route::get('/dashboard/shipment-chart', [DashboardController::class, 'getShipmentChartData']);
         Route::get('/dashboard/shipping-service-report', [DashboardController::class, 'getShippingServiceReport']);
