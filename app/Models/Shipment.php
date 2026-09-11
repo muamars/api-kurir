@@ -102,13 +102,6 @@ class Shipment extends Model
                     ? $photo->photo_url
                     : asset('storage/' . ltrim($photo->photo_url, '/'));
             }
-        } else {
-            $photo = $this->photos()->first();
-            if ($photo && $photo->photo_url) {
-                return \Illuminate\Support\Str::startsWith($photo->photo_url, ['http://', 'https://'])
-                    ? $photo->photo_url
-                    : asset('storage/' . ltrim($photo->photo_url, '/'));
-            }
         }
 
         if ($this->surat_pengantar_kerja) {
@@ -165,6 +158,11 @@ class Shipment extends Model
     public function photos(): HasMany
     {
         return $this->hasMany(ShipmentPhoto::class);
+    }
+
+    public function statusHistories(): HasMany
+    {
+        return $this->hasMany(ShipmentStatusHistory::class);
     }
 
     public function category(): BelongsTo

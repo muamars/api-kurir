@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Shipment;
 use App\Models\ShipmentDestination;
 use App\Models\ShipmentProgress;
+use App\Models\ShipmentStatusHistory;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -178,9 +179,20 @@ class ShipmentProgressController extends Controller
         try {
             DB::beginTransaction();
 
+            // Re-fetch parent shipment dengan lock terlebih dahulu untuk menjaga hierarki penguncian
+            $lockedShipment = Shipment::whereKey($shipmentId)->lockForUpdate()->first();
+            if (!$lockedShipment) {
+                DB::rollBack();
+                return response()->json(['message' => 'Shipment tidak ditemukan'], 404);
+            }
+
             // Re-fetch destination dengan lock agar tidak ada race condition
             // jika dua driver mencoba update destination yang sama bersamaan
-            $destination = ShipmentDestination::lockForUpdate()->find($destinationId);
+            $destination = ShipmentDestination::whereKey($destinationId)
+                ->where('shipment_id', $lockedShipment->id)
+                ->lockForUpdate()
+                ->first();
+
             if (!$destination) {
                 DB::rollBack();
                 return response()->json(['message' => 'Destination tidak ditemukan'], 404);
@@ -199,7 +211,7 @@ class ShipmentProgressController extends Controller
 
             // === Simpan progress ===
             $progress = ShipmentProgress::create([
-                'shipment_id' => $shipment->id,
+                'shipment_id' => $lockedShipment->id,
                 'destination_id' => $destination->id,
                 'driver_id' => auth()->id(),
                 'status' => $request->status,
@@ -214,17 +226,17 @@ class ShipmentProgressController extends Controller
             // === Update status destinasi dengan validasi flow ===
             $this->updateDestinationStatus($destination, $request->status);
 
-            // ✅ NEW: Auto-update shipment status based on destination progress
-            $this->updateShipmentStatusBasedOnDestinations($shipment);
+            // ✅ Auto-update shipment status based on destination progress
+            $this->updateShipmentStatusBasedOnDestinations($lockedShipment);
 
             // ✅ Invalidate dashboard cache so driver and admin stats update instantly
-            DashboardController::invalidateFor([$shipment->created_by, $shipment->assigned_driver_id, auth()->id()]);
+            DashboardController::invalidateFor([$lockedShipment->created_by, $lockedShipment->assigned_driver_id, auth()->id()]);
 
             // === Handle status DELIVERED: kirim notifikasi ===
             if ($request->status === 'delivered') {
                 try {
                     app(NotificationService::class)->destinationDelivered(
-                        $shipment->load(['creator', 'driver']),
+                        $lockedShipment->load(['creator', 'driver']),
                         $destination,
                         $progress
                     );
@@ -235,38 +247,66 @@ class ShipmentProgressController extends Controller
                 }
             }
 
-            // === Handle status TAKEOVER: kembalikan ke admin ===
+            // === Handle status TAKEOVER: kembalikan ke admin dengan batas takeover ===
             if ($request->status === 'takeover') {
-                \Log::info('Processing takeover', [
-                    'shipment_id' => $shipment->id,
+                \Log::info('Processing takeover by driver', [
+                    'shipment_id' => $lockedShipment->id,
                     'destination_id' => $destination->id,
                     'takeover_reason' => $request->takeover_reason ?? $request->note,
                     'driver_id' => auth()->id(),
                 ]);
 
-                // ✅ NEW: Remove shipment from current bulk assignment
-                $this->removeShipmentFromBulkAssignment($shipment->id, auth()->id());
+                $maxTakeover = config('shipment.max_takeover', 3);
+                if ($lockedShipment->takeover_count >= $maxTakeover) {
+                    $lockedShipment->update(['needs_review' => true]);
+                    DB::commit();
+
+                    return response()->json([
+                        'message' => "Batas {$maxTakeover}x takeover tercapai. Pengiriman ditandai perlu peninjauan supervisor.",
+                    ], 422);
+                }
+
+                // Remove shipment from current bulk assignment
+                $this->removeShipmentFromBulkAssignment($lockedShipment->id, auth()->id());
+
+                $newTakeoverCount = $lockedShipment->takeover_count + 1;
+                $oldShipmentStatus = $lockedShipment->status;
 
                 // Update shipment: kembali ke pending, unassign driver
-                $shipment->update([
-                    'status' => 'pending',
+                $lockedShipment->update([
+                    'status'             => 'pending',
                     'assigned_driver_id' => null,
+                    'approved_by'        => null,
+                    'approved_at'        => null,
+                    'takeover_count'     => $newTakeoverCount,
+                    'last_takeover_at'   => now(),
                 ]);
 
-                // PENTING: Reset semua destination yang belum selesai kembali ke pending
-                // agar driver baru bisa pickup lagi (updated untuk flow baru)
-                $resetCount = $shipment->destinations()
-                    ->whereNotIn('status', ['returning', 'finished']) // ✅ UPDATED: Tidak reset yang sudah returning/finished
+                // Reset semua destination yang belum selesai kembali ke pending
+                $resetCount = $lockedShipment->destinations()
+                    ->whereNotIn('status', ['returning', 'finished'])
                     ->update(['status' => 'pending']);
 
+                ShipmentStatusHistory::record(
+                    $lockedShipment->id,
+                    $oldShipmentStatus,
+                    'pending',
+                    'takeover_driver',
+                    auth()->id(),
+                    null,
+                    auth()->id(),
+                    $request->takeover_reason ?? $request->note ?? 'Driver meminta takeover kendala lapangan',
+                    ['takeover_count' => $newTakeoverCount]
+                );
+
                 \Log::info('Takeover destinations reset', [
-                    'shipment_id' => $shipment->id,
+                    'shipment_id' => $lockedShipment->id,
                     'reset_count' => $resetCount,
                 ]);
 
                 try {
                     app(NotificationService::class)->shipmentTakeover(
-                        $shipment->load(['creator', 'driver']),
+                        $lockedShipment->load(['creator', 'driver']),
                         $request->takeover_reason ?? $request->note
                     );
                 } catch (\Exception $e) {
@@ -279,35 +319,40 @@ class ShipmentProgressController extends Controller
             // === Handle status FINISHED: complete shipment jika semua finished ===
             if ($request->status === 'finished') {
                 \Log::info('Processing FINISHED status', [
-                    'shipment_id' => $shipment->id,
+                    'shipment_id' => $lockedShipment->id,
                     'destination_id' => $destination->id,
                     'driver_id' => auth()->id(),
                 ]);
 
-                $allDestinationsFinished = $shipment->destinations()
+                $allDestinationsFinished = $lockedShipment->destinations()
                     ->where('status', 'finished')
-                    ->count() === $shipment->destinations()->count();
-
-                \Log::info('Checking if all destinations finished', [
-                    'shipment_id' => $shipment->id,
-                    'finished_count' => $shipment->destinations()->where('status', 'finished')->count(),
-                    'total_count' => $shipment->destinations()->count(),
-                    'all_finished' => $allDestinationsFinished,
-                ]);
+                    ->count() === $lockedShipment->destinations()->count();
 
                 if ($allDestinationsFinished) {
-                    $oldShipmentStatus = $shipment->status;
-                    $shipment->update(['status' => 'completed', 'completed_at' => $shipment->completed_at ?? now()]);
+                    $oldShipmentStatus = $lockedShipment->status;
+                    $lockedShipment->update(['status' => 'completed', 'completed_at' => $lockedShipment->completed_at ?? now()]);
+
+                    ShipmentStatusHistory::record(
+                        $lockedShipment->id,
+                        $oldShipmentStatus,
+                        'completed',
+                        'complete_auto',
+                        auth()->id(),
+                        auth()->id(),
+                        null,
+                        'Semua destinasi selesai dikirim'
+                    );
+
                     \Log::info('Shipment marked as completed', [
-                        'shipment_id' => $shipment->id,
+                        'shipment_id' => $lockedShipment->id,
                         'old_status' => $oldShipmentStatus,
                         'new_status' => 'completed',
                         'reason' => 'All destinations finished',
                         'driver_id' => auth()->id(),
                     ]);
 
-                    // ✅ NEW: Update semua paket dalam bulk assignment ketika paket terakhir selesai
-                    $this->updateBulkAssignmentStatusOnCompletion($shipment, auth()->id());
+                    // Update semua paket dalam bulk assignment ketika paket terakhir selesai
+                    $this->updateBulkAssignmentStatusOnCompletion($lockedShipment, auth()->id());
                 }
             }
 
@@ -388,6 +433,17 @@ class ShipmentProgressController extends Controller
         // Only update if status actually changed
         if ($newShipmentStatus !== $oldShipmentStatus) {
             $shipment->update(['status' => $newShipmentStatus]);
+
+            ShipmentStatusHistory::record(
+                $shipment->id,
+                $oldShipmentStatus,
+                $newShipmentStatus,
+                'auto_destination_sync',
+                auth()->id(),
+                $shipment->assigned_driver_id,
+                null,
+                "Status diubah otomatis ke {$newShipmentStatus} berdasarkan progres destinasi"
+            );
             
             \Log::info('Shipment status auto-updated based on destinations', [
                 'shipment_id' => $shipment->id,

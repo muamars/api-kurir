@@ -41,7 +41,8 @@ class DashboardController extends Controller
         $user     = $request->user();
         $dateFrom = Carbon::parse($request->input('date_from', Carbon::now()->subMonths(3)->format('Y-m-d')))->startOfDay();
         $dateTo   = Carbon::parse($request->input('date_to', Carbon::now()->format('Y-m-d')))->endOfDay();
-        $cacheKey = "dashboard.index.{$user->id}.{$dateFrom->format('Y-m-d')}.{$dateTo->format('Y-m-d')}";
+        $version  = (int) Cache::get("dashboard.version.{$user->id}", 1);
+        $cacheKey = "dashboard.index.{$user->id}.v{$version}.{$dateFrom->format('Y-m-d')}.{$dateTo->format('Y-m-d')}";
 
         $stats = Cache::remember($cacheKey, 120, function () use ($user, $dateFrom, $dateTo) {
             $data = [
@@ -71,25 +72,20 @@ class DashboardController extends Controller
     }
 
     /**
-     * Hapus cache dashboard untuk user tertentu.
+     * Hapus / bump version cache dashboard untuk user tertentu.
      * Dipanggil setiap ada perubahan status shipment.
+     * Kompatibel dengan file cache & database cache pada shared hosting.
      */
     public static function invalidateFor(array $userIds): void
     {
         foreach (array_unique(array_filter($userIds)) as $id) {
+            $currentVersion = (int) Cache::get("dashboard.version.{$id}", 1);
+            Cache::put("dashboard.version.{$id}", $currentVersion + 1, 86400 * 30);
+
             Cache::forget("dashboard.index.{$id}");
             $today = Carbon::now()->format('Y-m-d');
             $threeMonthsAgo = Carbon::now()->subMonths(3)->format('Y-m-d');
             Cache::forget("dashboard.index.{$id}.{$threeMonthsAgo}.{$today}");
-
-            try {
-                if (config('cache.default') === 'redis') {
-                    $keys = \Illuminate\Support\Facades\Redis::keys("*dashboard.index.{$id}*");
-                    foreach ($keys as $key) {
-                        \Illuminate\Support\Facades\Redis::del($key);
-                    }
-                }
-            } catch (\Throwable $e) {}
 
             foreach (['week', 'month', 'year'] as $period) {
                 Cache::forget("dashboard.chart.{$id}.{$period}");
@@ -269,7 +265,8 @@ class DashboardController extends Controller
     {
         $period   = $request->get('period', 'week'); // week, month, year
         $user     = $request->user();
-        $cacheKey = "dashboard.chart.{$user->id}.{$period}";
+        $version  = (int) Cache::get("dashboard.version.{$user->id}", 1);
+        $cacheKey = "dashboard.chart.{$user->id}.v{$version}.{$period}";
         $ttl      = 300; // 5 menit — chart mingguan/bulanan jarang berubah drastis
 
         $data = Cache::remember($cacheKey, $ttl, function () use ($period, $user) {
@@ -882,7 +879,8 @@ class DashboardController extends Controller
             // ✅ ANTRIAN TIKET: Tampilkan SEMUA tiket untuk semua user
             // Tidak ada role-based filtering - semua user bisa lihat semua tiket
             $query = Shipment::with([
-                'creator:id,name,email',
+                'creator.division',
+                'division',
                 'driver:id,name,email',
                 'category:id,name',
                 'vehicleType:id,name',
@@ -943,6 +941,10 @@ class DashboardController extends Controller
 
             // Transform data untuk antrian tiket
             $tableData = $shipments->getCollection()->map(function ($shipment) {
+                $creatorDivisionName = $shipment->creator?->relationLoaded('division') && $shipment->creator?->division 
+                    ? $shipment->creator->division->name 
+                    : ($shipment->relationLoaded('division') && $shipment->division ? $shipment->division->name : null);
+
                 return [
                     'id' => $shipment->id,
                     'shipment_id' => $shipment->shipment_id,
@@ -959,12 +961,14 @@ class DashboardController extends Controller
                     'created_at' => $shipment->created_at->format('Y-m-d H:i:s'),
                     'created_at_formatted' => $shipment->created_at->format('d M Y, H:i'),
                     'created_at_human' => $shipment->created_at->diffForHumans(),
+                    'division_name' => $creatorDivisionName,
                     
                     // Creator info
                     'creator' => $shipment->creator ? [
                         'id' => $shipment->creator->id,
                         'name' => $shipment->creator->name,
                         'email' => $shipment->creator->email,
+                        'division' => $creatorDivisionName,
                     ] : null,
                     
                     // Driver info

@@ -10,6 +10,8 @@ use App\Http\Requests\UpdateShipmentRequest;
 use App\Http\Resources\ShipmentResource;
 use App\Models\Shipment;
 use App\Models\ShipmentProgress;
+use App\Models\ShipmentStatusHistory;
+use App\Models\User;
 use App\Services\NotificationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -204,6 +206,18 @@ class ShipmentController extends Controller
                 ]);
             }
 
+            // Audit log initial creation
+            ShipmentStatusHistory::record(
+                $shipment->id,
+                null,
+                'pending',
+                'create',
+                auth()->id(),
+                null,
+                null,
+                'Shipment baru dibuat'
+            );
+
             DB::commit();
             DB::statement("SELECT RELEASE_LOCK('spj_seq_{$year}')");
 
@@ -235,7 +249,7 @@ class ShipmentController extends Controller
 
     public function update(UpdateShipmentRequest $request, Shipment $shipment): JsonResponse
     {
-        $shipment->update($request->only(['category_id', 'vehicle_type_id', 'notes', 'priority', 'deadline', 'status']));
+        $shipment->update($request->only(['category_id', 'vehicle_type_id', 'notes', 'priority', 'deadline']));
 
         return response()->json([
             'message' => 'Shipment updated successfully',
@@ -247,30 +261,59 @@ class ShipmentController extends Controller
     {
         $this->authorize('approve-shipments');
 
-        if (! in_array($shipment->status, ['pending'])) {
-            return response()->json([
-                'message' => 'Only pending shipments can be approved',
-            ], 400);
+        $request->validate([
+            'driver_id' => [
+                'required',
+                'exists:users,id',
+                function ($attribute, $value, $fail) {
+                    $user = User::find($value);
+                    if (!$user || !$user->hasRole('Kurir') || !$user->is_active) {
+                        $fail('Driver yang dipilih bukan kurir aktif.');
+                    }
+                },
+            ],
+        ]);
+
+        $result = DB::transaction(function () use ($request, $shipment) {
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->status !== 'pending') {
+                return ['error' => 'Only pending shipments can be approved', 'code' => 400];
+            }
+
+            $locked->update([
+                'assigned_driver_id' => $request->driver_id,
+                'status'             => 'assigned',
+                'approved_by'        => auth()->id(),
+                'approved_at'        => now(),
+            ]);
+
+            ShipmentStatusHistory::record(
+                $locked->id,
+                'pending',
+                'assigned',
+                'approve',
+                auth()->id(),
+                $request->driver_id,
+                null,
+                'Shipment disetujui dan ditugaskan ke kurir',
+                ['approved_by' => auth()->id()]
+            );
+
+            return ['ok' => true, 'shipment' => $locked];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], $result['code']);
         }
 
-        $request->validate([
-            'driver_id' => 'required|exists:users,id',
-        ]);
-
-        $shipment->update([
-            'assigned_driver_id' => $request->driver_id,
-            'status' => 'assigned',
-            'approved_by' => auth()->id(),
-            'approved_at' => now(),
-        ]);
-
-        $shipment->load(['creator', 'approver', 'driver']);
-        app(NotificationService::class)->shipmentAssigned($shipment);
-        DashboardController::invalidateFor([$shipment->created_by, $request->driver_id, auth()->id()]);
+        $fresh = $shipment->fresh(['creator', 'approver', 'driver']);
+        app(NotificationService::class)->shipmentAssigned($fresh);
+        DashboardController::invalidateFor([$fresh->created_by, $request->driver_id, auth()->id()]);
 
         return response()->json([
             'message' => 'Shipment approved and driver assigned successfully',
-            'data'    => $shipment,
+            'data'    => $fresh,
         ]);
     }
 
@@ -279,7 +322,16 @@ class ShipmentController extends Controller
         $this->authorize('assign-drivers');
 
         $request->validate([
-            'driver_id' => 'required|exists:users,id',
+            'driver_id' => [
+                'required',
+                'exists:users,id',
+                function ($attribute, $value, $fail) {
+                    $user = User::find($value);
+                    if (!$user || !$user->hasRole('Kurir') || !$user->is_active) {
+                        $fail('Driver yang dipilih bukan kurir aktif.');
+                    }
+                },
+            ],
         ]);
 
         $result = DB::transaction(function () use ($request, $shipment) {
@@ -290,10 +342,23 @@ class ShipmentController extends Controller
                 return ['error' => 'Only assigned shipments can be reassigned', 'code' => 400];
             }
 
+            $previousDriverId = $locked->assigned_driver_id;
+
             $locked->update([
                 'assigned_driver_id' => $request->driver_id,
                 'status'             => 'assigned',
             ]);
+
+            ShipmentStatusHistory::record(
+                $locked->id,
+                'assigned',
+                'assigned',
+                'reassign',
+                auth()->id(),
+                $request->driver_id,
+                $previousDriverId,
+                'Driver pengiriman diganti'
+            );
 
             return ['ok' => true];
         });
@@ -318,7 +383,16 @@ class ShipmentController extends Controller
         $request->validate([
             'shipment_ids' => 'required|array|min:1',
             'shipment_ids.*' => 'required|exists:shipments,id',
-            'driver_id' => 'required|exists:users,id',
+            'driver_id' => [
+                'required',
+                'exists:users,id',
+                function ($attribute, $value, $fail) {
+                    $user = User::find($value);
+                    if (!$user || !$user->hasRole('Kurir') || !$user->is_active) {
+                        $fail('Driver yang dipilih bukan kurir aktif.');
+                    }
+                },
+            ],
             'vehicle_type_id' => [
                 'required',
                 'exists:vehicle_types,id',
@@ -361,6 +435,21 @@ class ShipmentController extends Controller
                     'approved_at'        => $now,
                     'updated_at'         => $now,
                 ]);
+
+            // Catat audit trail untuk setiap shipment yang di-assign
+            foreach ($shipments as $s) {
+                ShipmentStatusHistory::record(
+                    $s->id,
+                    'pending',
+                    'assigned',
+                    'bulk_assign',
+                    $approvedBy,
+                    $request->driver_id,
+                    null,
+                    'Penugasan massal ke kurir via bulkAssignDriver',
+                    ['approved_by' => $approvedBy, 'vehicle_type_id' => $request->vehicle_type_id]
+                );
+            }
 
             DB::commit();
 
@@ -618,41 +707,64 @@ class ShipmentController extends Controller
 
     public function startDelivery(Shipment $shipment): JsonResponse
     {
-        if ($shipment->assigned_driver_id !== auth()->id()) {
-            return response()->json([
-                'message' => 'You are not assigned to this shipment',
-            ], 403);
+        $result = DB::transaction(function () use ($shipment) {
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->assigned_driver_id !== auth()->id()) {
+                return ['error' => 'You are not assigned to this shipment', 'code' => 403];
+            }
+
+            if (! in_array($locked->status, ['assigned', 'pending'])) {
+                return ['error' => 'Shipment must be assigned or pending before starting delivery', 'code' => 400];
+            }
+
+            // Validasi: Harus ada minimal 1 destination yang sudah di-pickup
+            $pickedDestinations = $locked->destinations()->where('status', 'picked')->lockForUpdate()->get();
+            if ($pickedDestinations->isEmpty()) {
+                return [
+                    'error' => 'Please pickup at least one item before starting delivery',
+                    'hint'  => 'Use POST /shipments/{id}/destinations/{destination_id}/progress with status=picked',
+                    'code'  => 400
+                ];
+            }
+
+            $oldStatus = $locked->status;
+            $locked->update(['status' => 'in_progress']);
+
+            // update semua destinasi yg sudah picked jadi in_progress
+            $locked->destinations()
+                ->where('status', 'picked')
+                ->update(['status' => 'in_progress']);
+
+            ShipmentStatusHistory::record(
+                $locked->id,
+                $oldStatus,
+                'in_progress',
+                'start_delivery',
+                auth()->id(),
+                $locked->assigned_driver_id,
+                null,
+                'Kurir memulai pengiriman'
+            );
+
+            return ['ok' => true, 'shipment' => $locked];
+        });
+
+        if (isset($result['error'])) {
+            $res = ['message' => $result['error']];
+            if (isset($result['hint'])) {
+                $res['hint'] = $result['hint'];
+            }
+            return response()->json($res, $result['code']);
         }
 
-        if (! in_array($shipment->status, ['assigned', 'pending'])) {
-            return response()->json([
-                'message' => 'Shipment must be assigned or pending before starting delivery',
-            ], 400);
-        }
-
-        // Validasi: Harus ada minimal 1 destination yang sudah di-pickup
-        $pickedCount = $shipment->destinations()->where('status', 'picked')->count();
-        if ($pickedCount === 0) {
-            return response()->json([
-                'message' => 'Please pickup at least one item before starting delivery',
-                'hint' => 'Use POST /shipments/{id}/destinations/{destination_id}/progress with status=picked',
-            ], 400);
-        }
-
-        // update shipment
-        $shipment->update(['status' => 'in_progress']);
-
-        // update semua destinasi yg sudah picked jadi in_progress
-        $shipment->destinations()
-            ->where('status', 'picked')
-            ->update(['status' => 'in_progress']);
-
+        $fresh = $shipment->fresh(['creator', 'driver', 'destinations']);
         // kirim notifikasi
-        app(NotificationService::class)->deliveryStarted($shipment->load(['creator', 'driver']));
+        app(NotificationService::class)->deliveryStarted($fresh);
 
         return response()->json([
             'message' => 'Delivery started successfully',
-            'data' => $shipment->load('destinations'),
+            'data' => $fresh,
         ]);
     }
 
@@ -662,28 +774,51 @@ class ShipmentController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        if (! in_array($shipment->status, ['pending', 'assigned'])) {
-            return response()->json([
-                'message' => 'Only pending or assigned shipments can be cancelled',
-            ], 400);
-        }
-
         $request->validate([
             'cancel_reason' => 'nullable|string|max:1000',
         ]);
 
-        $shipment->update([
-            'status' => 'cancelled',
-            'cancelled_by' => auth()->id(),
-            'cancelled_at' => now(),
-            'cancel_reason' => $request->cancel_reason,
-        ]);
+        $result = DB::transaction(function () use ($request, $shipment) {
+            $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
 
-        app(\App\Services\NotificationService::class)->shipmentCancelled($shipment->fresh(['creator', 'driver']));
+            if (! in_array($locked->status, ['pending', 'assigned'])) {
+                return ['error' => 'Only pending or assigned shipments can be cancelled', 'code' => 400];
+            }
+
+            $oldStatus = $locked->status;
+
+            $locked->update([
+                'status'        => 'cancelled',
+                'cancelled_by'  => auth()->id(),
+                'cancelled_at'  => now(),
+                'cancel_reason' => $request->cancel_reason,
+            ]);
+
+            ShipmentStatusHistory::record(
+                $locked->id,
+                $oldStatus,
+                'cancelled',
+                'cancel',
+                auth()->id(),
+                $locked->assigned_driver_id,
+                null,
+                $request->cancel_reason ?? 'Dibatalkan oleh admin',
+                ['cancelled_by' => auth()->id(), 'cancel_reason' => $request->cancel_reason]
+            );
+
+            return ['ok' => true];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], $result['code']);
+        }
+
+        $fresh = $shipment->fresh(['creator', 'driver']);
+        app(\App\Services\NotificationService::class)->shipmentCancelled($fresh);
 
         return response()->json([
             'message' => 'Shipment cancelled successfully',
-            'data' => $shipment->fresh(['creator', 'driver']),
+            'data' => $fresh,
         ]);
     }
 
@@ -691,7 +826,7 @@ class ShipmentController extends Controller
     {
         $this->authorize('assign-drivers');
 
-        $maxTakeover = config('shipment.max_takeover');
+        $maxTakeover = config('shipment.max_takeover', 3);
 
         $result = DB::transaction(function () use ($shipment, $maxTakeover) {
             // Kunci baris agar tidak balapan dengan startDelivery / takeover lain
@@ -712,15 +847,32 @@ class ShipmentController extends Controller
             }
 
             $previousDriverId = $locked->assigned_driver_id;
+            $previousApprovedBy = $locked->approved_by;
+            $newTakeoverCount = $locked->takeover_count + 1;
 
             $locked->update([
                 'status'             => 'pending',
                 'assigned_driver_id' => null,
                 'approved_by'        => null,
                 'approved_at'        => null,
-                'takeover_count'     => $locked->takeover_count + 1,
+                'takeover_count'     => $newTakeoverCount,
                 'last_takeover_at'   => now(),
             ]);
+
+            ShipmentStatusHistory::record(
+                $locked->id,
+                'assigned',
+                'pending',
+                'takeover',
+                auth()->id(),
+                null,
+                $previousDriverId,
+                'Pengiriman di-takeover oleh admin dan dikembalikan ke pending',
+                [
+                    'takeover_count'        => $newTakeoverCount,
+                    'previous_approved_by' => $previousApprovedBy,
+                ]
+            );
 
             return ['previous_driver_id' => $previousDriverId];
         });
@@ -1056,9 +1208,10 @@ class ShipmentController extends Controller
         try {
             DB::beginTransaction();
 
-            // Get shipments that can be completed
+            // Get shipments that can be completed with row lock
             $shipments = Shipment::whereIn('id', $request->shipment_ids)
                 ->whereIn('status', ['pending', 'assigned', 'in_progress'])
+                ->lockForUpdate()
                 ->get();
 
             if ($shipments->count() !== count($request->shipment_ids)) {
@@ -1084,6 +1237,9 @@ class ShipmentController extends Controller
             $completedCount = 0;
 
             foreach ($shipments as $shipment) {
+                $oldStatus = $shipment->status;
+                $driverId = $shipment->assigned_driver_id ?? $completedBy;
+
                 $shipment->update([
                     'status'              => 'completed',
                     'shipping_cost'       => $request->shipping_cost,
@@ -1095,7 +1251,6 @@ class ShipmentController extends Controller
                 ]);
 
                 // Update destinations yang belum finished (Observer tetap terpanggil)
-                $driverId = $shipment->assigned_driver_id ?? $completedBy;
                 foreach ($shipment->destinations as $destination) {
                     if ($destination->status !== 'finished') {
                         $destination->update(['status' => 'finished']);
@@ -1110,6 +1265,21 @@ class ShipmentController extends Controller
                         ]);
                     }
                 }
+
+                ShipmentStatusHistory::record(
+                    $shipment->id,
+                    $oldStatus,
+                    'completed',
+                    'complete',
+                    $completedBy,
+                    $shipment->assigned_driver_id,
+                    null,
+                    'Diselesaikan via complete-shipments',
+                    [
+                        'shipping_cost' => $request->shipping_cost,
+                        'vehicle_used'  => $request->vehicle_used,
+                    ]
+                );
 
                 $completedCount++;
             }
@@ -1150,9 +1320,9 @@ class ShipmentController extends Controller
     // Helper methods
     private function calculateDestinationTiming($destination): array
     {
-        $histories = $destination->statusHistories()
-            ->orderBy('changed_at', 'asc')
-            ->get();
+        $histories = $destination->relationLoaded('statusHistories')
+            ? $destination->statusHistories->sortBy('changed_at')
+            : $destination->statusHistories()->orderBy('changed_at', 'asc')->get();
 
         if ($histories->isEmpty()) {
             return ['status' => 'No timing data available'];
