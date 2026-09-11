@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
+use App\Models\DriverStatusLog;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 
 class UserController extends Controller
 {
@@ -17,7 +20,22 @@ class UserController extends Controller
         $drivers = User::role('Kurir')
             ->where('is_active', true)
             ->with(['division:id,name,description'])
-            ->get(['id', 'name', 'phone', 'division_id']);
+            ->get(['id', 'name', 'phone', 'profile_photo', 'division_id']);
+
+        return response()->json([
+            'data' => $drivers,
+        ]);
+    }
+
+    public function getStandbyDrivers(): JsonResponse
+    {
+        $drivers = User::role('Kurir')
+            ->where('is_active', true)
+            ->whereDoesntHave('assignedShipments', function ($q) {
+                $q->whereIn('status', ['assigned', 'in_progress']);
+            })
+            ->with(['division:id,name,description'])
+            ->get(['id', 'name', 'phone', 'profile_photo', 'division_id']);
 
         return response()->json([
             'data' => $drivers,
@@ -47,7 +65,7 @@ class UserController extends Controller
             $query->where('is_active', filter_var($request->is_active, FILTER_VALIDATE_BOOLEAN));
         }
 
-        $users = $query->get(['id', 'name', 'email', 'phone', 'division_id', 'is_active']);
+        $users = $query->get(['id', 'name', 'email', 'phone', 'profile_photo', 'division_id', 'is_active']);
 
         return response()->json([
             'data' => $users,
@@ -58,11 +76,17 @@ class UserController extends Controller
     {
         $validated = $request->validated();
 
+        $photoPath = null;
+        if ($request->hasFile('profile_photo')) {
+            $photoPath = $request->file('profile_photo')->store('profile_photos', 'public');
+        }
+
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'phone' => $validated['phone'] ?? null,
+            'profile_photo' => $photoPath,
             'division_id' => $validated['division_id'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
         ]);
@@ -96,6 +120,13 @@ class UserController extends Controller
             'division_id' => $validated['division_id'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
         ];
+
+        if ($request->hasFile('profile_photo')) {
+            if ($user->profile_photo && Storage::disk('public')->exists($user->profile_photo)) {
+                Storage::disk('public')->delete($user->profile_photo);
+            }
+            $updateData['profile_photo'] = $request->file('profile_photo')->store('profile_photos', 'public');
+        }
 
         // Only update password if provided
         if (! empty($validated['password'])) {
@@ -134,7 +165,19 @@ class UserController extends Controller
             ], 400);
         }
 
-        $user->delete();
+        try {
+            if ($user->profile_photo && Storage::disk('public')->exists($user->profile_photo)) {
+                Storage::disk('public')->delete($user->profile_photo);
+            }
+            $user->delete();
+        } catch (QueryException $e) {
+            if ($e->getCode() === '23000') {
+                return response()->json([
+                    'message' => 'Tidak dapat menghapus pengguna ini karena masih memiliki data terkait (riwayat pengiriman, progress, dll). Nonaktifkan pengguna jika tidak ingin digunakan lagi.',
+                ], 409);
+            }
+            throw $e;
+        }
 
         return response()->json([
             'message' => 'User deleted successfully',
@@ -179,7 +222,7 @@ class UserController extends Controller
         ]);
     }
 
-    public function toggleMyStatus(): JsonResponse
+    public function toggleMyStatus(Request $request): JsonResponse
     {
         $user = auth()->user();
 
@@ -192,6 +235,16 @@ class UserController extends Controller
 
         $user->is_active = ! $user->is_active;
         $user->save();
+
+        $action = $user->is_active ? 'online' : 'offline';
+        $note = $request->input('note');
+
+        DriverStatusLog::create([
+            'user_id' => $user->id,
+            'action' => $action,
+            'note' => $note ?: null,
+            'logged_at' => now(),
+        ]);
 
         $status = $user->is_active ? 'aktif' : 'nonaktif';
         $message = $user->is_active
@@ -206,6 +259,58 @@ class UserController extends Controller
                 'is_active' => $user->is_active,
                 'status' => $status,
             ],
+        ]);
+    }
+
+    public function myStatusLogs(): JsonResponse
+    {
+        $logs = DriverStatusLog::where('user_id', auth()->id())
+            ->orderByDesc('logged_at')
+            ->limit(50)
+            ->get(['id', 'action', 'note', 'logged_at']);
+
+        return response()->json(['data' => $logs]);
+    }
+
+    public function allDriverStatusLogs(Request $request): JsonResponse
+    {
+        $query = DriverStatusLog::with('user:id,name,phone')
+            ->orderByDesc('logged_at');
+
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        if ($request->filled('action')) {
+            $query->where('action', $request->action);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('logged_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('logged_at', '<=', $request->date_to);
+        }
+
+        $logs = $query->paginate($request->input('per_page', 50));
+
+        // Summary per driver
+        $summary = DriverStatusLog::selectRaw('user_id, action, count(*) as total')
+            ->when($request->filled('user_id'), fn($q) => $q->where('user_id', $request->user_id))
+            ->groupBy('user_id', 'action')
+            ->with('user:id,name')
+            ->get()
+            ->groupBy('user_id')
+            ->map(fn($rows) => [
+                'driver' => $rows->first()->user?->name,
+                'online_count' => $rows->where('action', 'online')->first()?->total ?? 0,
+                'offline_count' => $rows->where('action', 'offline')->first()?->total ?? 0,
+            ]);
+
+        return response()->json([
+            'data' => $logs,
+            'summary' => $summary->values(),
         ]);
     }
 

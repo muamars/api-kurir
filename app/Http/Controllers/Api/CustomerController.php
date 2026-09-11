@@ -19,14 +19,20 @@ class CustomerController extends Controller
             $query->where('is_active', $request->boolean('is_active'));
         }
 
-        // Search by company name or customer name
+        // Search by company name, customer name, or address
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('company_name', 'LIKE', "%{$search}%")
                     ->orWhere('customer_name', 'LIKE', "%{$search}%")
-                    ->orWhere('phone', 'LIKE', "%{$search}%");
+                    ->orWhere('phone', 'LIKE', "%{$search}%")
+                    ->orWhere('address', 'LIKE', "%{$search}%");
             });
+        }
+
+        // Filter by exact company name
+        if ($request->filled('company_name')) {
+            $query->where('company_name', $request->company_name);
         }
 
         $perPage = $request->get('per_page', 15);
@@ -78,6 +84,16 @@ class CustomerController extends Controller
         return response()->json([
             'message' => 'Customer berhasil dihapus',
         ]);
+    }
+
+    public function companies()
+    {
+        $companies = Customer::select('company_name')
+            ->distinct()
+            ->orderBy('company_name')
+            ->pluck('company_name');
+
+        return response()->json(['data' => $companies]);
     }
 
     /**

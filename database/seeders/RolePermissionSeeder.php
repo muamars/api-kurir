@@ -9,129 +9,82 @@ use Spatie\Permission\Models\Role;
 
 class RolePermissionSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
-        // Create permissions for courier tracking system
+        // ── Permissions ─────────────────────────────────────────────────────────
         $permissions = [
-            // Dashboard permissions
-            'view-dashboard',
-            'view-analytics',
+            // Dashboard
+            'view-dashboard', 'view-analytics',
 
-            // Shipment permissions
-            'view-shipments',
-            'create-shipments',
-            'edit-shipments',
-            'delete-shipments',
-            'approve-shipments',
-            'assign-drivers',
+            // Shipment
+            'view-shipments', 'create-shipments', 'edit-shipments',
+            'delete-shipments', 'approve-shipments', 'assign-drivers',
 
-            // Progress tracking permissions
-            'view-progress',
-            'update-progress',
-            'view-driver-history',
+            // Progress
+            'view-progress', 'update-progress', 'view-driver-history',
 
-            // User management permissions
-            'view-users',
-            'create-users',
-            'edit-users',
-            'delete-users',
+            // User management
+            'view-users', 'create-users', 'edit-users', 'delete-users',
 
-            // Role management permissions
-            'view-roles',
-            'create-roles',
-            'edit-roles',
-            'delete-roles',
+            // Role management
+            'view-roles', 'create-roles', 'edit-roles', 'delete-roles',
 
             // Permission management
-            'view-permissions',
-            'create-permissions',
-            'edit-permissions',
-            'delete-permissions',
+            'view-permissions', 'create-permissions', 'edit-permissions', 'delete-permissions',
 
             // Division management
-            'view-divisions',
-            'create-divisions',
-            'edit-divisions',
-            'delete-divisions',
+            'view-divisions', 'create-divisions', 'edit-divisions', 'delete-divisions',
 
-            // Notification permissions
-            'view-notifications',
-            'manage-notifications',
+            // Notifications
+            'view-notifications', 'manage-notifications',
 
-            // File management permissions
-            'upload-files',
-            'download-files',
-            'manage-files',
+            // Files
+            'upload-files', 'download-files', 'manage-files',
 
-            // Blog permissions
-            'view blogs',
-            'create blogs',
-            'edit blogs',
-            'delete blogs',
+            // Blog
+            'view blogs', 'create blogs', 'edit blogs', 'delete blogs',
 
-            // Project permissions
-            'view projects',
-            'create projects',
-            'edit projects',
-            'delete projects',
+            // Project
+            'view projects', 'create projects', 'edit projects', 'delete projects',
+
+            // System (Super Admin only)
+            'manage-system', 'manage-datamaster',
         ];
 
         foreach ($permissions as $permission) {
             Permission::firstOrCreate(['name' => $permission]);
         }
 
-        // Create roles for courier tracking system
-        $adminRole = Role::firstOrCreate(['name' => 'Admin']);
-        $kurirRole = Role::firstOrCreate(['name' => 'Kurir']);
-        $userRole = Role::firstOrCreate(['name' => 'User']);
+        // ── Roles ────────────────────────────────────────────────────────────────
+        $superAdminRole = Role::firstOrCreate(['name' => 'Super Admin']);
+        $adminRole      = Role::firstOrCreate(['name' => 'Admin']);
+        $kurirRole      = Role::firstOrCreate(['name' => 'Kurir']);
+        $userRole       = Role::firstOrCreate(['name' => 'User']);
 
-        // Assign permissions to Admin role (full access)
-        $adminRole->givePermissionTo([
+        // Super Admin: semua permission tanpa terkecuali
+        $superAdminRole->syncPermissions(Permission::all());
+
+        // Admin: hanya menu operasional pengiriman
+        // Akses: /dashboard /ticket /add /pengiriman /laporan /tracking
+        $adminRole->syncPermissions([
             'view-dashboard',
             'view-analytics',
             'view-shipments',
             'create-shipments',
             'edit-shipments',
-            'delete-shipments',
             'approve-shipments',
             'assign-drivers',
             'view-progress',
-            'view-users',
-            'create-users',
-            'edit-users',
-            'delete-users',
-            'view-roles',
-            'create-roles',
-            'edit-roles',
-            'delete-roles',
-            'view-permissions',
-            'create-permissions',
-            'edit-permissions',
-            'delete-permissions',
-            'view-divisions',
-            'create-divisions',
-            'edit-divisions',
-            'delete-divisions',
             'view-notifications',
             'manage-notifications',
             'upload-files',
             'download-files',
-            'manage-files',
             'view blogs',
-            'create blogs',
-            'edit blogs',
-            'delete blogs',
             'view projects',
-            'create projects',
-            'edit projects',
-            'delete projects',
         ]);
 
-        // Assign permissions to Kurir role (driver-specific)
-        $kurirRole->givePermissionTo([
+        // Kurir: akses terbatas untuk driver
+        $kurirRole->syncPermissions([
             'view-dashboard',
             'view-shipments',
             'view-progress',
@@ -140,11 +93,11 @@ class RolePermissionSeeder extends Seeder
             'view-notifications',
             'upload-files',
             'download-files',
-            'view blogs', // ✅ NEW: Kurir bisa melihat blog yang ditujukan untuk mereka
+            'view blogs',
         ]);
 
-        // Assign permissions to User role (basic user)
-        $userRole->givePermissionTo([
+        // User: akses dasar pembuat tiket
+        $userRole->syncPermissions([
             'view-dashboard',
             'view-shipments',
             'create-shipments',
@@ -156,8 +109,5 @@ class RolePermissionSeeder extends Seeder
             'create blogs',
             'view projects',
         ]);
-
-        // Create default users (will be handled by CourierTrackingSeeder)
-        // This seeder only handles roles and permissions
     }
 }

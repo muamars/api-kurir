@@ -1,97 +1,94 @@
-# Track Kurir - Courier Tracking API
+# Pengiriman Barang
 
 API sistem tracking kurir dengan role-based access control untuk mengelola pengiriman, delivery, dan progress tracking.
 
-**Author:** Muammar  
-**Repository:** https://github.com/muamars/api-kurir.git
+**Author:** Ales
 
 ## 🚀 Fitur Utama
 
 ### 🔐 Authentication & Authorization
 
--   ✅ Login/Logout dengan Laravel Sanctum
--   ✅ Role-based Access Control (Admin, Kurir, User)
--   ✅ Permission-based Authorization
--   ✅ Multi-division organization
+- ✅ Login/Logout dengan Laravel Sanctum
+- ✅ Role-based Access Control (Admin, Kurir, User)
+- ✅ Permission-based Authorization
+- ✅ Multi-division organization
 
 ### 📦 Shipment Management
 
--   ✅ Create, approve, assign shipments
--   ✅ Multiple destinations per shipment
--   ✅ Priority levels (regular, urgent)
--   ✅ Advanced filtering dan search
--   ✅ Real-time status tracking
+- ✅ Create, approve, assign shipments
+- ✅ Multiple destinations per shipment
+- ✅ Priority levels (regular, urgent)
+- ✅ Advanced filtering dan search
+- ✅ Real-time status tracking
 
 ### 🚚 Delivery Tracking
 
--   ✅ Real-time progress updates
--   ✅ Photo upload dengan thumbnails
--   ✅ Multi-destination deliveries
--   ✅ Driver assignment dan tracking
--   ✅ GPS location tracking
+- ✅ Real-time progress updates
+- ✅ Photo upload dengan thumbnails
+- ✅ Multi-destination deliveries
+- ✅ Driver assignment dan tracking
+- ✅ GPS location tracking
 
 ### 📊 Dashboard & Analytics
 
--   ✅ Role-specific statistics
--   ✅ Chart data (weekly, monthly, yearly)
--   ✅ Performance metrics
--   ✅ Real-time notifications
+- ✅ Role-specific statistics
+- ✅ Chart data (weekly, monthly, yearly)
+- ✅ Performance metrics
+- ✅ Real-time notifications
 
 ### 📁 File Management
 
--   ✅ SPJ document upload/download
--   ✅ Progress photos dengan compression
--   ✅ Bulk photo download (ZIP)
+- ✅ SPJ document upload/download
+- ✅ Progress photos dengan compression
+- ✅ Bulk photo download (ZIP)
 
 ### 🔔 Notification System
 
--   ✅ Real-time notifications untuk semua events
--   ✅ Mark as read functionality
--   ✅ Unread count tracking
+- ✅ Real-time notifications untuk semua events
+- ✅ Mark as read functionality
+- ✅ Unread count tracking
 
 ### 👥 User & Role Management
 
--   ✅ CRUD operations untuk users, roles, permissions
--   ✅ Division-based organization
--   ✅ Active/inactive user status
+- ✅ CRUD operations untuk users, roles, permissions
+- ✅ Division-based organization
+- ✅ Active/inactive user status
 
 ## 🏗️ Tech Stack
 
 ### Backend Framework
 
--   **Laravel 12.x** (PHP 8.2+)
--   **Laravel Sanctum** for API authentication
--   **Spatie Laravel Permission** for role-based access control
--   **SQLite** database (configurable to MySQL/PostgreSQL)
+- **Laravel 12.x** (PHP 8.2+)
+- **Laravel Sanctum** for API authentication
+- **Spatie Laravel Permission** for role-based access control
+- **SQLite** database (configurable to MySQL/PostgreSQL)
 
 ### Documentation
 
--   **Scramble** for automatic API documentation generation
--   **Interactive API Testing** built-in
+- **Scramble** for automatic API documentation generation
+- **Interactive API Testing** built-in
 
 ### Image Processing
 
--   **Intervention Image v3** for photo processing and thumbnails
+- **Intervention Image v3** for photo processing and thumbnails
 
 ### Development Tools
 
--   **Laravel Pint** for code formatting
--   **PHPUnit** for testing
--   **Laravel Sail** for Docker development
+- **Laravel Pint** for code formatting
+- **PHPUnit** for testing
+- **Laravel Sail** for Docker development
 
 ## 📋 Roles & Permissions
 
 ### Default Roles:
 
 1. **Admin** - Full access ke semua fitur
-
     - Approve shipments
     - Assign drivers
     - Manage users & roles
     - View all analytics
 
 2. **Kurir** - Driver-specific access
-
     - View assigned shipments
     - Update delivery progress
     - Upload delivery photos
@@ -105,24 +102,18 @@ API sistem tracking kurir dengan role-based access control untuk mengelola pengi
 
 ### Default Permissions:
 
--   `view-dashboard` - Akses dashboard
--   `manage-shipments` - CRUD shipments
--   `approve-shipments` - Approve pending shipments
--   `assign-drivers` - Assign drivers to shipments
--   `manage-users` - CRUD users
--   `manage-roles` - CRUD roles & permissions
--   `view-analytics` - View analytics data
--   `manage-files` - Upload/download files
+- `view-dashboard` - Akses dashboard
+- `manage-shipments` - CRUD shipments
+- `approve-shipments` - Approve pending shipments
+- `assign-drivers` - Assign drivers to shipments
+- `manage-users` - CRUD users
+- `manage-roles` - CRUD roles & permissions
+- `view-analytics` - View analytics data
+- `manage-files` - Upload/download files
 
 ## 🛠️ Setup & Installation
 
 ### 1. Clone Repository
-
-```bash
-git clone https://github.com/muamars/api-kurir.git
-cd api-kurir
-composer install
-```
 
 ### 2. Environment Setup
 
@@ -185,14 +176,14 @@ Setelah seeding, Anda dapat login dengan:
 
 ### Automatic Documentation
 
--   **Scramble Documentation**: `http://localhost:8000/docs/api`
--   **Interactive Testing**: Test API langsung dari dokumentasi
--   **Auto-generated**: Update otomatis saat code berubah
+- **Scramble Documentation**: `http://localhost:8000/docs/api`
+- **Interactive Testing**: Test API langsung dari dokumentasi
+- **Auto-generated**: Update otomatis saat code berubah
 
 ### Manual Testing
 
--   **REST Client**: Gunakan file `test_api.http` dengan VS Code REST Client extension
--   **38+ Test Cases**: Complete scenarios untuk Admin, Driver, dan User workflows
+- **REST Client**: Gunakan file `test_api.http` dengan VS Code REST Client extension
+- **38+ Test Cases**: Complete scenarios untuk Admin, Driver, dan User workflows
 
 ## 🔑 Token Generation untuk Testing
 
@@ -515,7 +506,7 @@ const progressResponse = await fetch(
             Authorization: `Bearer ${token}`,
         },
         body: formData,
-    }
+    },
 );
 ```
 
@@ -586,20 +577,13 @@ FILESYSTEM_DISK=public
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👨‍💻 Author
-
-**Muammar**
-
--   GitHub: [@muamars](https://github.com/muamars)
--   Repository: [api-kurir](https://github.com/muamars/api-kurir.git)
-
 ## 🙏 Acknowledgments
 
--   Laravel Framework
--   Spatie Laravel Permission
--   Scramble API Documentation
--   Intervention Image
--   All contributors and supporters
+- Laravel Framework
+- Spatie Laravel Permission
+- Scramble API Documentation
+- Intervention Image
+- All contributors and supporters
 
 ---
 

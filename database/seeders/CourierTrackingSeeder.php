@@ -21,11 +21,8 @@ class CourierTrackingSeeder extends Seeder
             ['name' => 'Finance', 'description' => 'Finance Division'],
             ['name' => 'Kurir', 'description' => 'Operations Division'],
             ['name' => 'Marketing', 'description' => 'Marketing Division'],
-            ['name' => 'Finishing', 'description' => 'Finishing Division'],
-            ['name' => 'CGO', 'description' => 'Computer Graphics Operator Division'],
-            ['name' => 'Chasier/Cusromer Service', 'description' => 'Cusromer Servic and cashier Division'],
             ['name' => 'HRD', 'description' => 'Operations Division'],
-            ['name' => 'Operator Indoor/Outdoor', 'description' => 'Operator Indoor/Outdoor Division'],
+            ['name' => 'IT', 'description' => 'IT Division'],
         ];
 
         foreach ($divisions as $division) {

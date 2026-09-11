@@ -259,6 +259,62 @@
           "response": []
         },
         {
+          "name": "Complete Shipments (Bulk)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "shipment_ids[]",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "shipment_ids[]",
+                  "value": "2",
+                  "type": "text"
+                },
+                {
+                  "key": "shipping_cost",
+                  "value": "150000",
+                  "type": "text"
+                },
+                {
+                  "key": "vehicle_used",
+                  "value": "Mobil Pick Up Toyota Hilux",
+                  "type": "text"
+                },
+                {
+                  "key": "completion_photo",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shipments/complete-shipments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shipments",
+                "complete-shipments"
+              ]
+            },
+            "description": "Complete multiple shipments with shipping cost, vehicle info, and optional photo (Admin only)"
+          },
+          "response": []
+        },
+        {
           "name": "Upload Admin Photos",
           "request": {
             "method": "POST",
@@ -1228,6 +1284,56 @@
               ]
             },
             "description": "Get chart data for dashboard visualization"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Shipping Service Report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/shipping-service-report?period=month&group_by=week",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "shipping-service-report"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "month",
+                  "description": "Preset period: today, week, month, quarter, year, custom"
+                },
+                {
+                  "key": "group_by",
+                  "value": "week",
+                  "description": "Group data by: day, week, month, year"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-01-01",
+                  "description": "Custom start date (Y-m-d)",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-01-31",
+                  "description": "Custom end date (Y-m-d)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get shipping service analysis report comparing online courier vs internal courier with cost breakdown"
           },
           "response": []
         }

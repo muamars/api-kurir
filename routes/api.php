@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Api\AuthController as ApiAuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DriverJourneyController;
 use App\Http\Controllers\Api\DivisionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PermissionController;
@@ -35,6 +36,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::prefix('v1')->group(function () {
         Route::post('/auth/logout', [ApiAuthController::class, 'logout']);
         Route::get('/auth/me', [ApiAuthController::class, 'me']);
+        Route::post('/auth/update-profile', [ApiAuthController::class, 'updateProfile']);
+        Route::post('/auth/change-password', [ApiAuthController::class, 'changePassword']);
 
         // Blog API Routes - Moved inside v1 prefix
         Route::middleware('permission:view blogs')->group(function () {
@@ -78,9 +81,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         
         // Bulk assignment routes (harus sebelum {shipment} routes)
         Route::post('/shipments/bulk-assign-driver', [ShipmentController::class, 'bulkAssignDriver']);
+        Route::post('/shipments/complete-shipments', [ShipmentController::class, 'completeShipments']);
         Route::get('/shipments/bulk-assignments', [ShipmentController::class, 'getBulkAssignmentHistory']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getBulkAssignmentDetail']);
         Route::get('/shipments/bulk-assignments/{bulkAssignmentId}/route-duration', [ShipmentProgressController::class, 'getAdminBulkAssignmentRouteDuration']);
+        Route::get('/shipments/needs-review', [ShipmentController::class, 'getNeedsReview']);
         
         Route::get('/shipments/{shipment}', [ShipmentController::class, 'show']);
         Route::put('/shipments/{shipment}', [ShipmentController::class, 'update']);
@@ -89,11 +94,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/approve', [ShipmentController::class, 'approve']);
         Route::post('/shipments/{shipment}/assign-driver', [ShipmentController::class, 'assignDriver']);
         Route::post('/shipments/{shipment}/pending', [ShipmentController::class, 'pending']);
+        Route::post('/shipments/{shipment}/reschedule', [ShipmentController::class, 'reschedule']);
+        Route::patch('/shipments/{shipment}/deadline', [ShipmentController::class, 'updateDeadline']);
         Route::post('/shipments/{shipment}/cancel', [ShipmentController::class, 'cancel']);
+        Route::post('/shipments/{shipment}/takeover', [ShipmentController::class, 'takeover']);
+        Route::post('/shipments/{shipment}/reset-takeover-count', [ShipmentController::class, 'resetTakeoverCount']);
+        Route::post('/shipments/{shipment}/approve-supervisor-review', [ShipmentController::class, 'approveSupervisorReview']);
 
         // Driver actions
         Route::post('/shipments/{shipment}/start-delivery', [ShipmentController::class, 'startDelivery']);
-        
+
         // Driver bulk assignments (Kurir only)
         Route::get('/driver/bulk-assignments', [ShipmentController::class, 'getMyBulkAssignments']);
         Route::get('/driver/bulk-assignments/{bulkAssignmentId}', [ShipmentController::class, 'getMyBulkAssignmentDetail']);
@@ -108,12 +118,23 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/driver/history', [ShipmentProgressController::class, 'getDriverHistory']);
         Route::get('/driver/performance-report', [ShipmentProgressController::class, 'getDriverPerformanceReport']);
         Route::get('/driver/route-report', [ShipmentProgressController::class, 'getDriverRouteReport']);
+        Route::get('/driver/route-report-summary', [ShipmentProgressController::class, 'getDriverRouteReportSummary']);
+        Route::get('/driver/timing-summary', [ShipmentProgressController::class, 'getDriverTimingSummary']);
 
         // Dashboard
         Route::get('/dashboard', [DashboardController::class, 'index']);
+        Route::get('/dashboard/driver-journey/top-drivers', [DriverJourneyController::class, 'getTopDrivers']);
+        Route::get('/dashboard/driver-journey/analysis', [DriverJourneyController::class, 'getJourneyAnalysis']);
+        Route::get('/dashboard/driver-journey/online-logs', [DriverJourneyController::class, 'getDriverOnlineLogs']);
         Route::get('/dashboard/chart', [DashboardController::class, 'getChartData']);
         Route::get('/dashboard/shipment-chart', [DashboardController::class, 'getShipmentChartData']);
+        Route::get('/dashboard/shipping-service-report', [DashboardController::class, 'getShippingServiceReport']);
         Route::get('/dashboard/shipments-table', [DashboardController::class, 'getShipmentsTable']);
+        Route::get('/dashboard/delivery-trend', [DashboardController::class, 'getDeliveryTrend']);
+        Route::get('/dashboard/driver-accumulation', [DashboardController::class, 'getDriverAccumulation']);
+        Route::get('/dashboard/user-request-analysis', [DashboardController::class, 'getUserRequestAnalysis']);
+        Route::get('/dashboard/cancel-order-analysis', [DashboardController::class, 'getCancelOrderAnalysis']);
+        Route::get('/dashboardDelivery', [DashboardController::class, 'dashboardDelivery']);
         Route::get('/dashboard/test', function() {
             return response()->json(['message' => 'Test endpoint works', 'time' => now()]);
         });
@@ -135,27 +156,61 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Master data
         Route::get('/divisions', [DivisionController::class, 'index']);
         Route::get('/drivers', [UserController::class, 'getDrivers']);
+        Route::get('/drivers/standby', [UserController::class, 'getStandbyDrivers']);
         Route::get('/users', [UserController::class, 'getUsers']);
 
         // Customer Management (all authenticated users can view)
         Route::get('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'index']);
         Route::get('/customers/search', [\App\Http\Controllers\Api\CustomerController::class, 'search']);
+        Route::get('/customers/companies', [\App\Http\Controllers\Api\CustomerController::class, 'companies']);
         Route::get('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'show']);
 
         // Kurir self-service status toggle
         Route::post('/my-status/toggle', [UserController::class, 'toggleMyStatus']);
         Route::get('/my-status', [UserController::class, 'getMyStatus']);
+        Route::get('/my-status/logs', [UserController::class, 'myStatusLogs']);
+
+        // Admin: semua driver status logs
+        Route::get('/admin/driver-status-logs', [UserController::class, 'allDriverStatusLogs']);
 
         // Shipment Categories (all users can view)
         Route::get('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'index']);
         Route::get('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'show']);
 
+        // Shipment Categories CRUD (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
+            Route::post('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'store']);
+            Route::put('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'update']);
+            Route::delete('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'destroy']);
+            Route::patch('/shipment-categories/{shipmentCategory}/toggle', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'toggleActive']);
+        });
+
+        // Tugas Pengiriman (all users can view)
+        Route::get('/tugas-pengiriman', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'index']);
+        Route::get('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'show']);
+
+        // Tugas Pengiriman CRUD (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
+            Route::post('/tugas-pengiriman', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'store']);
+            Route::put('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'update']);
+            Route::delete('/tugas-pengiriman/{tugasPengiriman}', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'destroy']);
+            Route::patch('/tugas-pengiriman/{tugasPengiriman}/toggle', [\App\Http\Controllers\Api\TugasPengirimanController::class, 'toggleActive']);
+        });
+
         // Vehicle Types (all users can view)
         Route::get('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'index']);
         Route::get('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'show']);
 
-        // Role & Permission Management Routes (Admin only)
-        Route::middleware('role:Admin')->group(function () {
+        // Vehicle Types Management (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
+            Route::post('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'store']);
+            Route::put('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'update']);
+        });
+
+        Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy'])->middleware('role:Admin|Super Admin');
+
+        // Role & Permission Management Routes (Admin & Super Admin)
+        Route::middleware('role:Admin|Super Admin')->group(function () {
             // User Management
             Route::get('/users/{user}', [UserController::class, 'show']);
             Route::apiResource('users', UserController::class)->except(['index', 'show']);
@@ -174,11 +229,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/shipment-categories', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'store']);
             Route::put('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'update']);
             Route::delete('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'destroy']);
-
-            // Vehicle Types Management (Admin only)
-            Route::post('/vehicle-types', [\App\Http\Controllers\Api\VehicleTypeController::class, 'store']);
-            Route::put('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'update']);
-            Route::delete('/vehicle-types/{vehicleType}', [\App\Http\Controllers\Api\VehicleTypeController::class, 'destroy']);
 
             // Customer Management (Admin only for create/update/delete)
             Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);

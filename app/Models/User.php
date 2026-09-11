@@ -9,6 +9,8 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
 
+use Illuminate\Support\Facades\Storage;
+
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
@@ -25,8 +27,31 @@ class User extends Authenticatable
         'password',
         'division_id',
         'phone',
+        'profile_photo',
         'is_active',
     ];
+
+    /**
+     * The accessors to append to the model's array form.
+     *
+     * @var list<string>
+     */
+    protected $appends = [
+        'profile_photo_url',
+    ];
+
+    public function getProfilePhotoUrlAttribute(): ?string
+    {
+        if (! $this->profile_photo) {
+            return null;
+        }
+
+        if (filter_var($this->profile_photo, FILTER_VALIDATE_URL)) {
+            return $this->profile_photo;
+        }
+
+        return asset('storage/' . ltrim($this->profile_photo, '/'));
+    }
 
     /**
      * The attributes that should be hidden for serialization.

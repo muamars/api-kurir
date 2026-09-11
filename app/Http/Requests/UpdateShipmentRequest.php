@@ -41,7 +41,6 @@ class UpdateShipmentRequest extends FormRequest
             'notes' => 'nullable|string',
             'priority' => 'nullable|in:regular,urgent',
             'deadline' => 'nullable|date|after:today',
-            'status' => 'nullable|in:pending,approved,assigned,in_progress,completed,cancelled',
         ];
     }
 }

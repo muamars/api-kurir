@@ -19,7 +19,7 @@ class ShipmentCategoryController extends Controller
         $query = ShipmentCategory::query()->withCount('shipments');
 
         // Non-admin users only see active categories
-        if (! $request->user()->hasRole('Admin')) {
+        if (! $request->user()->hasAnyRole(['Admin', 'Super Admin'])) {
             $query->where('is_active', true);
         }
 
@@ -80,6 +80,17 @@ class ShipmentCategoryController extends Controller
 
         return response()->json([
             'message' => 'Category deleted successfully',
+        ]);
+    }
+
+    public function toggleActive(ShipmentCategory $shipmentCategory)
+    {
+        $shipmentCategory->is_active = ! $shipmentCategory->is_active;
+        $shipmentCategory->save();
+
+        return response()->json([
+            'message' => 'Status berhasil diubah',
+            'data'    => $shipmentCategory,
         ]);
     }
 }

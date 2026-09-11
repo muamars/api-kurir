@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Shipment;
 use App\Models\ShipmentDestination;
 use App\Models\ShipmentProgress;
+use App\Models\ShipmentStatusHistory;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -150,49 +151,67 @@ class ShipmentProgressController extends Controller
             }
         }
 
+        // Upload foto SEBELUM transaction agar tidak tahan koneksi DB terlalu lama
+        $photoPath = null;
+        $thumbnailPath = null;
+        $receivedPhotoPath = null;
+
         try {
-            // === Handle photo upload ===
-            $photoPath = null;
-            $thumbnailPath = null;
-
             if ($request->hasFile('photo')) {
-                try {
-                    $photo = $request->file('photo');
-                    $filename = time().'_'.uniqid().'.jpg'; // Force JPG for better compression
-
-                    // Use compression method
-                    $compressedPaths = $this->storeCompressedPhoto($photo, 'shipment-photos', $filename);
-                    $photoPath = $compressedPaths['original'];
-                    $thumbnailPath = $compressedPaths['thumbnail'];
-                } catch (\Exception $e) {
-                    \Log::error('Photo upload failed', [
-                        'error' => $e->getMessage(),
-                        'file' => $photo->getClientOriginalName() ?? 'unknown',
-                    ]);
-                    throw new \Exception('Failed to upload photo: '.$e->getMessage());
-                }
+                $photo = $request->file('photo');
+                $filename = time().'_'.uniqid().'.jpg';
+                $compressedPaths = $this->storeCompressedPhoto($photo, 'shipment-photos', $filename);
+                $photoPath = $compressedPaths['original'];
+                $thumbnailPath = $compressedPaths['thumbnail'];
             }
 
-            // === Handle received photo (optional) ===
-            $receivedPhotoPath = null;
             if ($request->hasFile('received_photo')) {
-                try {
-                    $receivedPhoto = $request->file('received_photo');
-                    $receivedFilename = 'received_'.time().'_'.uniqid().'.jpg';
-                    
-                    $compressedReceivedPaths = $this->storeCompressedPhoto($receivedPhoto, 'shipment-photos', $receivedFilename);
-                    $receivedPhotoPath = $compressedReceivedPaths['original'];
-                } catch (\Exception $e) {
-                    \Log::error('Received photo upload failed', [
-                        'error' => $e->getMessage(),
-                    ]);
-                    throw new \Exception('Failed to upload received photo: '.$e->getMessage());
-                }
+                $receivedPhoto = $request->file('received_photo');
+                $receivedFilename = 'received_'.time().'_'.uniqid().'.jpg';
+                $compressedReceivedPaths = $this->storeCompressedPhoto($receivedPhoto, 'shipment-photos', $receivedFilename);
+                $receivedPhotoPath = $compressedReceivedPaths['original'];
+            }
+        } catch (\Exception $e) {
+            \Log::error('Photo upload failed', ['error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal upload foto: '.$e->getMessage()], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Re-fetch parent shipment dengan lock terlebih dahulu untuk menjaga hierarki penguncian
+            $lockedShipment = Shipment::whereKey($shipmentId)->lockForUpdate()->first();
+            if (!$lockedShipment) {
+                DB::rollBack();
+                return response()->json(['message' => 'Shipment tidak ditemukan'], 404);
+            }
+
+            // Re-fetch destination dengan lock agar tidak ada race condition
+            // jika dua driver mencoba update destination yang sama bersamaan
+            $destination = ShipmentDestination::whereKey($destinationId)
+                ->where('shipment_id', $lockedShipment->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$destination) {
+                DB::rollBack();
+                return response()->json(['message' => 'Destination tidak ditemukan'], 404);
+            }
+
+            // Validasi ulang transisi setelah lock (status mungkin sudah berubah)
+            $currentStatus = $destination->status;
+            if (!isset($validStatusTransitions[$currentStatus]) ||
+                !in_array($newStatus, $validStatusTransitions[$currentStatus])) {
+                DB::rollBack();
+                return response()->json([
+                    'message' => 'Status sudah berubah oleh proses lain, silakan refresh',
+                    'current_status' => $currentStatus,
+                ], 409);
             }
 
             // === Simpan progress ===
             $progress = ShipmentProgress::create([
-                'shipment_id' => $shipment->id,
+                'shipment_id' => $lockedShipment->id,
                 'destination_id' => $destination->id,
                 'driver_id' => auth()->id(),
                 'status' => $request->status,
@@ -207,14 +226,17 @@ class ShipmentProgressController extends Controller
             // === Update status destinasi dengan validasi flow ===
             $this->updateDestinationStatus($destination, $request->status);
 
-            // ✅ NEW: Auto-update shipment status based on destination progress
-            $this->updateShipmentStatusBasedOnDestinations($shipment);
+            // ✅ Auto-update shipment status based on destination progress
+            $this->updateShipmentStatusBasedOnDestinations($lockedShipment);
+
+            // ✅ Invalidate dashboard cache so driver and admin stats update instantly
+            DashboardController::invalidateFor([$lockedShipment->created_by, $lockedShipment->assigned_driver_id, auth()->id()]);
 
             // === Handle status DELIVERED: kirim notifikasi ===
             if ($request->status === 'delivered') {
                 try {
                     app(NotificationService::class)->destinationDelivered(
-                        $shipment->load(['creator', 'driver']),
+                        $lockedShipment->load(['creator', 'driver']),
                         $destination,
                         $progress
                     );
@@ -225,38 +247,66 @@ class ShipmentProgressController extends Controller
                 }
             }
 
-            // === Handle status TAKEOVER: kembalikan ke admin ===
+            // === Handle status TAKEOVER: kembalikan ke admin dengan batas takeover ===
             if ($request->status === 'takeover') {
-                \Log::info('Processing takeover', [
-                    'shipment_id' => $shipment->id,
+                \Log::info('Processing takeover by driver', [
+                    'shipment_id' => $lockedShipment->id,
                     'destination_id' => $destination->id,
                     'takeover_reason' => $request->takeover_reason ?? $request->note,
                     'driver_id' => auth()->id(),
                 ]);
 
-                // ✅ NEW: Remove shipment from current bulk assignment
-                $this->removeShipmentFromBulkAssignment($shipment->id, auth()->id());
+                $maxTakeover = config('shipment.max_takeover', 3);
+                if ($lockedShipment->takeover_count >= $maxTakeover) {
+                    $lockedShipment->update(['needs_review' => true]);
+                    DB::commit();
+
+                    return response()->json([
+                        'message' => "Batas {$maxTakeover}x takeover tercapai. Pengiriman ditandai perlu peninjauan supervisor.",
+                    ], 422);
+                }
+
+                // Remove shipment from current bulk assignment
+                $this->removeShipmentFromBulkAssignment($lockedShipment->id, auth()->id());
+
+                $newTakeoverCount = $lockedShipment->takeover_count + 1;
+                $oldShipmentStatus = $lockedShipment->status;
 
                 // Update shipment: kembali ke pending, unassign driver
-                $shipment->update([
-                    'status' => 'pending',
+                $lockedShipment->update([
+                    'status'             => 'pending',
                     'assigned_driver_id' => null,
+                    'approved_by'        => null,
+                    'approved_at'        => null,
+                    'takeover_count'     => $newTakeoverCount,
+                    'last_takeover_at'   => now(),
                 ]);
 
-                // PENTING: Reset semua destination yang belum selesai kembali ke pending
-                // agar driver baru bisa pickup lagi (updated untuk flow baru)
-                $resetCount = $shipment->destinations()
-                    ->whereNotIn('status', ['returning', 'finished']) // ✅ UPDATED: Tidak reset yang sudah returning/finished
+                // Reset semua destination yang belum selesai kembali ke pending
+                $resetCount = $lockedShipment->destinations()
+                    ->whereNotIn('status', ['returning', 'finished'])
                     ->update(['status' => 'pending']);
 
+                ShipmentStatusHistory::record(
+                    $lockedShipment->id,
+                    $oldShipmentStatus,
+                    'pending',
+                    'takeover_driver',
+                    auth()->id(),
+                    null,
+                    auth()->id(),
+                    $request->takeover_reason ?? $request->note ?? 'Driver meminta takeover kendala lapangan',
+                    ['takeover_count' => $newTakeoverCount]
+                );
+
                 \Log::info('Takeover destinations reset', [
-                    'shipment_id' => $shipment->id,
+                    'shipment_id' => $lockedShipment->id,
                     'reset_count' => $resetCount,
                 ]);
 
                 try {
                     app(NotificationService::class)->shipmentTakeover(
-                        $shipment->load(['creator', 'driver']),
+                        $lockedShipment->load(['creator', 'driver']),
                         $request->takeover_reason ?? $request->note
                     );
                 } catch (\Exception $e) {
@@ -269,48 +319,62 @@ class ShipmentProgressController extends Controller
             // === Handle status FINISHED: complete shipment jika semua finished ===
             if ($request->status === 'finished') {
                 \Log::info('Processing FINISHED status', [
-                    'shipment_id' => $shipment->id,
+                    'shipment_id' => $lockedShipment->id,
                     'destination_id' => $destination->id,
                     'driver_id' => auth()->id(),
                 ]);
 
-                $allDestinationsFinished = $shipment->destinations()
+                $allDestinationsFinished = $lockedShipment->destinations()
                     ->where('status', 'finished')
-                    ->count() === $shipment->destinations()->count();
-
-                \Log::info('Checking if all destinations finished', [
-                    'shipment_id' => $shipment->id,
-                    'finished_count' => $shipment->destinations()->where('status', 'finished')->count(),
-                    'total_count' => $shipment->destinations()->count(),
-                    'all_finished' => $allDestinationsFinished,
-                ]);
+                    ->count() === $lockedShipment->destinations()->count();
 
                 if ($allDestinationsFinished) {
-                    $oldShipmentStatus = $shipment->status;
-                    $shipment->update(['status' => 'completed']);
+                    $oldShipmentStatus = $lockedShipment->status;
+                    $lockedShipment->update(['status' => 'completed', 'completed_at' => $lockedShipment->completed_at ?? now()]);
+
+                    ShipmentStatusHistory::record(
+                        $lockedShipment->id,
+                        $oldShipmentStatus,
+                        'completed',
+                        'complete_auto',
+                        auth()->id(),
+                        auth()->id(),
+                        null,
+                        'Semua destinasi selesai dikirim'
+                    );
+
                     \Log::info('Shipment marked as completed', [
-                        'shipment_id' => $shipment->id,
+                        'shipment_id' => $lockedShipment->id,
                         'old_status' => $oldShipmentStatus,
                         'new_status' => 'completed',
                         'reason' => 'All destinations finished',
                         'driver_id' => auth()->id(),
                     ]);
 
-                    // ✅ NEW: Update semua paket dalam bulk assignment ketika paket terakhir selesai
-                    $this->updateBulkAssignmentStatusOnCompletion($shipment, auth()->id());
+                    // Update semua paket dalam bulk assignment ketika paket terakhir selesai
+                    $this->updateBulkAssignmentStatusOnCompletion($lockedShipment, auth()->id());
                 }
             }
+
+            DB::commit();
 
             return response()->json([
                 'message' => 'Progress updated successfully',
                 'data' => $progress->load(['destination', 'driver']),
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
+
+            // Hapus file foto yang sudah terupload jika DB gagal
+            if ($photoPath) Storage::delete($photoPath);
+            if ($thumbnailPath) Storage::delete($thumbnailPath);
+            if ($receivedPhotoPath) Storage::delete($receivedPhotoPath);
+
             \Log::error('Update progress gagal', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'shipment_id' => $shipment->id,
-                'destination_id' => $destination->id,
+                'destination_id' => $destinationId,
                 'status' => $request->status ?? null,
             ]);
 
@@ -369,6 +433,17 @@ class ShipmentProgressController extends Controller
         // Only update if status actually changed
         if ($newShipmentStatus !== $oldShipmentStatus) {
             $shipment->update(['status' => $newShipmentStatus]);
+
+            ShipmentStatusHistory::record(
+                $shipment->id,
+                $oldShipmentStatus,
+                $newShipmentStatus,
+                'auto_destination_sync',
+                auth()->id(),
+                $shipment->assigned_driver_id,
+                null,
+                "Status diubah otomatis ke {$newShipmentStatus} berdasarkan progres destinasi"
+            );
             
             \Log::info('Shipment status auto-updated based on destinations', [
                 'shipment_id' => $shipment->id,
@@ -420,7 +495,7 @@ class ShipmentProgressController extends Controller
         $user = auth()->user();
         
         // Authorization: Admin bisa lihat semua, Kurir hanya yang assigned ke mereka, User hanya yang mereka buat
-        if (!$user->hasRole('Admin')) {
+        if (!$user->hasAnyRole(['Admin', 'Super Admin'])) {
             if ($user->hasRole('Kurir')) {
                 // Kurir hanya bisa lihat shipment yang assigned ke mereka
                 if ($shipment->assigned_driver_id !== $user->id) {
@@ -875,9 +950,9 @@ class ShipmentProgressController extends Controller
 
     private function analyzeDestinationDeliveryTime($destination): ?array
     {
-        $histories = $destination->statusHistories()
-            ->orderBy('changed_at', 'asc')
-            ->get();
+        $histories = $destination->relationLoaded('statusHistories')
+            ? $destination->statusHistories->sortBy('changed_at')
+            : $destination->statusHistories()->orderBy('changed_at', 'asc')->get();
 
         if ($histories->isEmpty()) {
             return null;
@@ -920,58 +995,77 @@ class ShipmentProgressController extends Controller
             'bulk_assignment_id' => 'nullable|exists:bulk_assignments,id',
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
-        $query = DB::table('bulk_assignments as ba')
-            ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
-            ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
-            ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
-            ->select([
-                'ba.id as bulk_assignment_id',
-                'ba.shipment_count',
-                'ba.shipment_ids',
-                'ba.assigned_at',
-                'admin.name as admin_name',
-                'driver.id as driver_id',
-                'driver.name as driver_name',
-                'vt.name as vehicle_type_name'
-            ]);
+        $applyFilters = function ($query) use ($request) {
+            if ($request->driver_id) {
+                $query->where('ba.driver_id', $request->driver_id);
+            }
+            if ($request->bulk_assignment_id) {
+                $query->where('ba.id', $request->bulk_assignment_id);
+            }
+            if ($request->date_from) {
+                $query->whereDate('ba.assigned_at', '>=', $request->date_from);
+            }
+            if ($request->date_to) {
+                $query->whereDate('ba.assigned_at', '<=', $request->date_to);
+            }
+            return $query;
+        };
 
-        // Filter by specific driver
-        if ($request->driver_id) {
-            $query->where('ba.driver_id', $request->driver_id);
-        }
+        $perPage = (int) ($request->per_page ?? 10);
+        $page = (int) ($request->page ?? 1);
 
-        // Filter by specific bulk assignment (rute)
-        if ($request->bulk_assignment_id) {
-            $query->where('ba.id', $request->bulk_assignment_id);
-        }
+        $baseQuery = $applyFilters(DB::table('bulk_assignments as ba'));
+        $totalRoutes = (clone $baseQuery)->count();
 
-        // Date range filter
-        if ($request->date_from) {
-            $query->whereDate('ba.assigned_at', '>=', $request->date_from);
-        }
-        if ($request->date_to) {
-            $query->whereDate('ba.assigned_at', '<=', $request->date_to);
-        }
+        $query = $applyFilters(
+            DB::table('bulk_assignments as ba')
+                ->join('users as admin', 'ba.admin_id', '=', 'admin.id')
+                ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
+                ->join('vehicle_types as vt', 'ba.vehicle_type_id', '=', 'vt.id')
+                ->select([
+                    'ba.id as bulk_assignment_id',
+                    'ba.shipment_count',
+                    'ba.shipment_ids',
+                    'ba.assigned_at',
+                    'admin.name as admin_name',
+                    'driver.id as driver_id',
+                    'driver.name as driver_name',
+                    'vt.name as vehicle_type_name'
+                ])
+        );
 
-        $bulkAssignments = $query->orderBy('ba.assigned_at', 'desc')->get();
+        $bulkAssignments = $query
+            ->orderBy('ba.assigned_at', 'desc')
+            ->forPage($page, $perPage)
+            ->get();
+
+        // Overall stats & summaries are computed via a single aggregate query over
+        // ALL bulk assignments matching the filters (not just the current page),
+        // so pagination doesn't skew totals shown alongside the paged route list.
+        $overallStats = $this->calculateRouteReportOverallStats($applyFilters(DB::table('bulk_assignments as ba')));
 
         $routeReports = [];
-        $overallStats = [
-            'total_routes' => 0,
-            'total_shipments' => 0,
-            'completed_routes' => 0,
-            'avg_route_completion_time' => 0,
-        ];
+
+        // Fetch shipments for every bulk assignment on this page in a single query
+        // (grouped in-memory below) instead of one query per bulk assignment.
+        $allShipmentIds = [];
+        foreach ($bulkAssignments as $bulkAssignment) {
+            $allShipmentIds = array_merge($allShipmentIds, json_decode($bulkAssignment->shipment_ids));
+        }
+
+        $shipmentsById = Shipment::with(['destinations.progress', 'destinations.statusHistories', 'creator', 'category', 'tugasPengiriman'])
+            ->whereIn('id', array_unique($allShipmentIds))
+            ->get()
+            ->keyBy('id');
 
         foreach ($bulkAssignments as $bulkAssignment) {
             $shipmentIds = json_decode($bulkAssignment->shipment_ids);
-            
-            // Get shipments with their destinations and progress
-            $shipments = Shipment::with(['destinations.statusHistories', 'creator'])
-                ->whereIn('id', $shipmentIds)
-                ->get();
+
+            $shipments = $shipmentsById->only($shipmentIds)->values();
 
             $routeData = [
                 'route_info' => [
@@ -1007,6 +1101,8 @@ class ShipmentProgressController extends Controller
                     'shipment_id' => $shipment->shipment_id,
                     'creator' => $shipment->creator->name,
                     'current_status' => $shipment->status,
+                    'category' => $shipment->category->name ?? null,
+                    'tugas_pengiriman' => $shipment->tugasPengiriman->tugas ?? null,
                     'destinations' => [],
                     'shipment_timing' => null,
                 ];
@@ -1017,50 +1113,60 @@ class ShipmentProgressController extends Controller
 
                 foreach ($shipment->destinations as $destination) {
                     $totalDestinations++;
-                    
+
                     $destinationTiming = $this->analyzeRouteDestinationTiming($destination);
-                    
+
                     $destinationData = [
                         'destination_id' => $destination->id,
+                        'sequence_order' => $destination->sequence_order,
                         'delivery_address' => $destination->delivery_address,
                         'receiver_name' => $destination->receiver_name,
+                        'receiver_company' => $destination->receiver_company,
                         'current_status' => $destination->status,
-                        'distance_category' => $this->categorizeDistance($destination->delivery_address),
                         'timing' => $destinationTiming,
                     ];
 
                     if ($destinationTiming) {
-                        $completedDestinations++;
-                        $allDeliveryTimes[] = $destinationTiming['delivery_time_minutes'];
-
-                        // Track route start and end times
+                        // Track route & shipment START using pickup_time (always non-null here)
                         if (!$routeStartTime || $destinationTiming['pickup_time'] < $routeStartTime) {
                             $routeStartTime = $destinationTiming['pickup_time'];
                         }
-                        if (!$routeEndTime || $destinationTiming['delivered_at'] > $routeEndTime) {
-                            $routeEndTime = $destinationTiming['delivered_at'];
-                        }
-
-                        // Track shipment start and end times
                         if (!$shipmentStartTime || $destinationTiming['pickup_time'] < $shipmentStartTime) {
                             $shipmentStartTime = $destinationTiming['pickup_time'];
                         }
-                        if (!$shipmentEndTime || $destinationTiming['delivered_at'] > $shipmentEndTime) {
-                            $shipmentEndTime = $destinationTiming['delivered_at'];
+
+                        if ($destinationTiming['delivered_at']) {
+                            // Destination is delivered → count as completed
+                            $completedDestinations++;
+                            if ($destinationTiming['delivery_time_minutes'] !== null) {
+                                $allDeliveryTimes[] = $destinationTiming['delivery_time_minutes'];
+                            }
+
+                            // Track route & shipment END using delivered_at
+                            if (!$routeEndTime || $destinationTiming['delivered_at'] > $routeEndTime) {
+                                $routeEndTime = $destinationTiming['delivered_at'];
+                            }
+                            if (!$shipmentEndTime || $destinationTiming['delivered_at'] > $shipmentEndTime) {
+                                $shipmentEndTime = $destinationTiming['delivered_at'];
+                            }
+                        } else {
+                            // Picked but not yet delivered
+                            $shipmentCompleted = false;
                         }
                     } else {
+                        // Not started yet
                         $shipmentCompleted = false;
                     }
 
                     $shipmentData['destinations'][] = $destinationData;
                 }
 
-                // Calculate shipment timing if completed
+                // Calculate shipment timing if all destinations delivered
                 if ($shipmentCompleted && $shipmentStartTime && $shipmentEndTime) {
                     $completedShipments++;
                     $duration = $shipmentEndTime->diff($shipmentStartTime);
                     $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
-                    
+
                     $shipmentData['shipment_timing'] = [
                         'start_time' => $shipmentStartTime->format('Y-m-d H:i:s'),
                         'end_time' => $shipmentEndTime->format('Y-m-d H:i:s'),
@@ -1094,25 +1200,6 @@ class ShipmentProgressController extends Controller
             }
 
             $routeReports[] = $routeData;
-
-            // Update overall stats
-            $overallStats['total_routes']++;
-            $overallStats['total_shipments'] += count($shipmentIds);
-            if ($completedShipments === count($shipmentIds)) {
-                $overallStats['completed_routes']++;
-            }
-        }
-
-        // Calculate overall average route completion time
-        $allRouteTimes = [];
-        foreach ($routeReports as $route) {
-            if (isset($route['route_summary']['total_route_time']['minutes'])) {
-                $allRouteTimes[] = $route['route_summary']['total_route_time']['minutes'];
-            }
-        }
-        
-        if (!empty($allRouteTimes)) {
-            $overallStats['avg_route_completion_time'] = round(array_sum($allRouteTimes) / count($allRouteTimes), 2);
         }
 
         return response()->json([
@@ -1123,45 +1210,401 @@ class ShipmentProgressController extends Controller
                     'from' => $request->date_from ?? 'Semua waktu',
                     'to' => $request->date_to ?? 'Semua waktu',
                 ],
+                'pagination' => [
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => $totalRoutes,
+                    'last_page' => $totalRoutes > 0 ? (int) ceil($totalRoutes / $perPage) : 1,
+                ],
             ],
         ]);
     }
 
-    private function analyzeRouteDestinationTiming($destination): ?array
+    /**
+     * Lightweight summary for dashboard widgets (category/tugas breakdown, driver
+     * ranking) that previously derived these from the full, unpaginated
+     * getDriverRouteReport() payload. Aggregates via SQL instead of pulling every
+     * shipment/destination/progress row into PHP.
+     */
+    public function getDriverRouteReportSummary(Request $request): JsonResponse
     {
-        $histories = $destination->statusHistories()
-            ->orderBy('changed_at', 'asc')
+        $request->validate([
+            'driver_id' => 'nullable|exists:users,id',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $bulkQuery = DB::table('bulk_assignments as ba');
+        if ($request->driver_id) {
+            $bulkQuery->where('ba.driver_id', $request->driver_id);
+        }
+        if ($request->date_from) {
+            $bulkQuery->whereDate('ba.assigned_at', '>=', $request->date_from);
+        }
+        if ($request->date_to) {
+            $bulkQuery->whereDate('ba.assigned_at', '<=', $request->date_to);
+        }
+
+        $shipmentIds = [];
+        foreach ($bulkQuery->pluck('ba.shipment_ids') as $rawIds) {
+            $shipmentIds = array_merge($shipmentIds, json_decode($rawIds) ?? []);
+        }
+        $shipmentIds = array_unique($shipmentIds);
+
+        if (empty($shipmentIds)) {
+            return response()->json([
+                'data' => [
+                    'category_counts' => [],
+                    'tugas_counts' => [],
+                    'driver_ranking' => [],
+                ],
+            ]);
+        }
+
+        $categoryCounts = DB::table('shipments as s')
+            ->join('shipment_categories as sc', 's.category_id', '=', 'sc.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('sc.name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('sc.name')
+            ->orderByDesc('total')
             ->get();
 
-        if ($histories->isEmpty()) {
-            return null;
+        $tugasCounts = DB::table('shipments as s')
+            ->join('tugas_pengiriman as tp', 's.tugas_pengiriman_id', '=', 'tp.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('tp.tugas as name')
+            ->selectRaw('count(*) as total')
+            ->groupBy('tp.tugas')
+            ->orderByDesc('total')
+            ->get();
+
+        $driverRanking = DB::table('shipments as s')
+            ->join('users as u', 's.assigned_driver_id', '=', 'u.id')
+            ->whereIn('s.id', $shipmentIds)
+            ->select('u.id', 'u.name')
+            ->selectRaw('count(*) as total_shipments')
+            ->groupBy('u.id', 'u.name')
+            ->orderByDesc('total_shipments')
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'category_counts' => $categoryCounts,
+                'tugas_counts' => $tugasCounts,
+                'driver_ranking' => $driverRanking,
+            ],
+        ]);
+    }
+
+    /**
+     * Monthly delivery-time accumulation (durasi/jeda/waktu pulang/efisiensi/total
+     * tujuan) for the "Analisa Waktu Pengiriman Driver" widget's monthly view,
+     * broken down per driver per month (not merged across drivers).
+     * Replays the same per-route timing logic as the frontend's AnalisaDriver table
+     * (departure = picked ?? in_progress; jeda = gap since previous stop's end;
+     * waktu pulang = returning → finished) but only returns the summed totals per
+     * driver/month instead of every destination row, so this stays cheap regardless
+     * of how many months are requested.
+     */
+    public function getDriverTimingSummary(Request $request): JsonResponse
+    {
+        $request->validate([
+            'driver_id' => 'nullable|exists:users,id',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date|after_or_equal:date_from',
+        ]);
+
+        $query = DB::table('bulk_assignments as ba')
+            ->join('users as driver', 'ba.driver_id', '=', 'driver.id')
+            ->select(['ba.id', 'ba.shipment_ids', 'ba.assigned_at', 'ba.driver_id', 'driver.name as driver_name']);
+        if ($request->driver_id) {
+            $query->where('ba.driver_id', $request->driver_id);
+        }
+        if ($request->date_from) {
+            $query->whereDate('ba.assigned_at', '>=', $request->date_from);
+        }
+        if ($request->date_to) {
+            $query->whereDate('ba.assigned_at', '<=', $request->date_to);
         }
 
-        $pickupTime = null;
-        $deliveredTime = null;
+        $bulkAssignments = $query->orderBy('ba.assigned_at')->get();
 
-        foreach ($histories as $history) {
-            if ($history->new_status === 'picked' && !$pickupTime) {
-                $pickupTime = $history->changed_at;
+        if ($bulkAssignments->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $allShipmentIds = [];
+        foreach ($bulkAssignments as $bulk) {
+            $allShipmentIds = array_merge($allShipmentIds, json_decode($bulk->shipment_ids) ?? []);
+        }
+
+        $shipmentsById = Shipment::with(['destinations.progress', 'destinations.statusHistories'])
+            ->whereIn('id', array_unique($allShipmentIds))
+            ->get()
+            ->keyBy('id');
+
+        // "{driver_id}|{Y-m}" => running totals, so each driver's months stay separate.
+        $groups = [];
+
+        foreach ($bulkAssignments as $bulk) {
+            $monthKey = \Carbon\Carbon::parse($bulk->assigned_at)->format('Y-m');
+            $groupKey = $bulk->driver_id . '|' . $monthKey;
+            $groups[$groupKey] ??= [
+                'driver_id' => $bulk->driver_id,
+                'driver_name' => $bulk->driver_name,
+                'month' => $monthKey,
+                'total_durasi' => 0,
+                'total_waiting' => 0,
+                'total_waktu_pulang' => 0,
+                'total_destinations' => 0,
+                'routes' => 0,
+            ];
+
+            $shipmentIds = json_decode($bulk->shipment_ids) ?? [];
+            $shipments = $shipmentsById->only($shipmentIds)->values();
+
+            // Flatten destinations across all shipments in this route, timed via the
+            // same analyzeRouteDestinationTiming() helper the detailed table uses.
+            $allDests = [];
+            foreach ($shipments as $shipment) {
+                foreach ($shipment->destinations as $destination) {
+                    $timing = $this->analyzeRouteDestinationTiming($destination);
+                    $allDests[] = [
+                        'departure' => $timing['pickup_time'] ?? null,
+                        'timestamps' => $timing['timestamps'] ?? [],
+                        'delivery_time_minutes' => $timing['delivery_time_minutes'] ?? null,
+                    ];
+                }
             }
-            if ($history->new_status === 'delivered') {
-                $deliveredTime = $history->changed_at;
-                break;
+
+            // Sort by departure time asc; un-started destinations go last (mirrors
+            // the frontend's Infinity fallback).
+            usort($allDests, function ($a, $b) {
+                $ta = $a['departure'] ? $a['departure']->timestamp : PHP_INT_MAX;
+                $tb = $b['departure'] ? $b['departure']->timestamp : PHP_INT_MAX;
+                return $ta <=> $tb;
+            });
+
+            $prevEnd = null;
+            $minutesBetween = function ($prev, $next) {
+                if (!$prev || !$next) {
+                    return null;
+                }
+                $diff = (strtotime($next) - strtotime($prev)) / 60;
+                return $diff > 0 ? (int) round($diff) : null;
+            };
+
+            foreach ($allDests as $item) {
+                $ts = $item['timestamps'];
+                $dep = $ts['picked'] ?? $ts['in_progress'] ?? null;
+                $durasi = $item['delivery_time_minutes'];
+
+                $waiting = $prevEnd !== null
+                    ? $minutesBetween($prevEnd, $dep)
+                    : $minutesBetween($ts['delivered'] ?? null, $ts['returning'] ?? null);
+                $waktuPulang = $minutesBetween($ts['returning'] ?? null, $ts['finished'] ?? null);
+
+                if ($durasi !== null) $groups[$groupKey]['total_durasi'] += $durasi;
+                if ($waiting !== null) $groups[$groupKey]['total_waiting'] += $waiting;
+                if ($waktuPulang !== null) $groups[$groupKey]['total_waktu_pulang'] += $waktuPulang;
+                $groups[$groupKey]['total_destinations']++;
+
+                $prevEnd = $ts['finished'] ?? $ts['returning'] ?? $ts['delivered'] ?? $ts['in_progress'] ?? $ts['picked'] ?? null;
+            }
+
+            $groups[$groupKey]['routes']++;
+        }
+
+        $result = [];
+        foreach ($groups as $totals) {
+            $efficiency = ($totals['total_durasi'] + $totals['total_waiting']) > 0
+                ? round(($totals['total_durasi'] / ($totals['total_durasi'] + $totals['total_waiting'])) * 100)
+                : null;
+
+            $result[] = [
+                'driver_id' => $totals['driver_id'],
+                'driver_name' => $totals['driver_name'],
+                'month' => $totals['month'],
+                'total_durasi' => $totals['total_durasi'],
+                'total_waiting' => $totals['total_waiting'],
+                'total_waktu_pulang' => $totals['total_waktu_pulang'],
+                'total_destinations' => $totals['total_destinations'],
+                'routes' => $totals['routes'],
+                'efficiency' => $efficiency,
+            ];
+        }
+
+        usort($result, function ($a, $b) {
+            return [$b['month'], $a['driver_name']] <=> [$a['month'], $b['driver_name']];
+        });
+
+        return response()->json(['data' => $result]);
+    }
+
+    /**
+     * Aggregate route stats (total routes/shipments, completed routes, avg completion
+     * time) via SQL over all matching bulk assignments — avoids loading full shipment
+     * graphs into memory just to count them.
+     */
+    private function calculateRouteReportOverallStats($bulkAssignmentQuery): array
+    {
+        $totalRoutes = (clone $bulkAssignmentQuery)->count();
+        $totalShipments = (int) (clone $bulkAssignmentQuery)->sum('shipment_count');
+
+        $bulkAssignmentIds = (clone $bulkAssignmentQuery)->pluck('ba.id');
+
+        $completedRoutes = 0;
+        $allRouteTimes = [];
+
+        if ($bulkAssignmentIds->isNotEmpty()) {
+            // Route completion is derived from shipment status, which isn't stored
+            // per-bulk-assignment — chunk ids to keep the IN() clause bounded.
+            foreach ($bulkAssignmentIds->chunk(200) as $idsChunk) {
+                $rows = DB::table('bulk_assignments as ba')
+                    ->whereIn('ba.id', $idsChunk)
+                    ->select(['ba.id', 'ba.shipment_ids'])
+                    ->get();
+
+                foreach ($rows as $row) {
+                    $shipmentIds = json_decode($row->shipment_ids) ?? [];
+                    if (empty($shipmentIds)) {
+                        continue;
+                    }
+
+                    $completedCount = Shipment::whereIn('id', $shipmentIds)
+                        ->where('status', 'completed')
+                        ->count();
+
+                    if ($completedCount === count($shipmentIds)) {
+                        $completedRoutes++;
+                    }
+
+                    // Mirrors analyzeRouteDestinationTiming()'s fallback logic: route start
+                    // is "picked" time, falling back to "in_progress"; route end is
+                    // "delivered" time, falling back to "finished".
+                    $timing = DB::table('shipment_progress as sp')
+                        ->whereIn('sp.shipment_id', $shipmentIds)
+                        ->selectRaw(
+                            "COALESCE(" .
+                            "MIN(CASE WHEN sp.status = 'picked' THEN sp.progress_time END), " .
+                            "MIN(CASE WHEN sp.status = 'in_progress' THEN sp.progress_time END)" .
+                            ") as start_time, " .
+                            "COALESCE(" .
+                            "MAX(CASE WHEN sp.status = 'delivered' THEN sp.progress_time END), " .
+                            "MAX(CASE WHEN sp.status = 'finished' THEN sp.progress_time END)" .
+                            ") as end_time"
+                        )
+                        ->first();
+
+                    if ($timing && $timing->start_time && $timing->end_time) {
+                        $minutes = (strtotime($timing->end_time) - strtotime($timing->start_time)) / 60;
+                        if ($minutes >= 0) {
+                            $allRouteTimes[] = $minutes;
+                        }
+                    }
+                }
             }
         }
-
-        if (!$pickupTime || !$deliveredTime) {
-            return null;
-        }
-
-        $duration = $deliveredTime->diff($pickupTime);
-        $totalMinutes = ($duration->days * 24 * 60) + ($duration->h * 60) + $duration->i;
 
         return [
-            'pickup_time' => $pickupTime,
-            'delivered_at' => $deliveredTime,
-            'delivery_time_minutes' => $totalMinutes,
-            'delivery_time_human' => $this->formatDuration($duration),
+            'total_routes' => $totalRoutes,
+            'total_shipments' => $totalShipments,
+            'completed_routes' => $completedRoutes,
+            'avg_route_completion_time' => !empty($allRouteTimes)
+                ? round(array_sum($allRouteTimes) / count($allRouteTimes), 2)
+                : 0,
+        ];
+    }
+
+    private function analyzeRouteDestinationTiming($destination): ?array
+    {
+        // ── Primary source: ShipmentProgress (written explicitly by controller) ──
+        // Use property accessor (eager-loaded), sort in-memory
+        $progressRecords = $destination->progress
+            ->sortBy('progress_time')
+            ->values();
+
+        // ── Fallback: destination_status_histories (written by Observer) ──
+        $historyRecords = $progressRecords->isEmpty()
+            ? $destination->statusHistories->sortBy('changed_at')->values()
+            : collect();
+
+        if ($progressRecords->isEmpty() && $historyRecords->isEmpty()) {
+            return null;
+        }
+
+        // Build times map — key: status, value: Carbon timestamp
+        $times = [];
+
+        if ($progressRecords->isNotEmpty()) {
+            foreach ($progressRecords as $p) {
+                if (!array_key_exists($p->status, $times)) {
+                    $times[$p->status] = $p->progress_time; // Carbon
+                }
+            }
+            // finished: keep last occurrence
+            $lastFinished = $progressRecords->last(fn ($p) => $p->status === 'finished');
+            if ($lastFinished) {
+                $times['finished'] = $lastFinished->progress_time;
+            }
+        } else {
+            foreach ($historyRecords as $h) {
+                if (!array_key_exists($h->new_status, $times)) {
+                    $times[$h->new_status] = $h->changed_at; // Carbon
+                }
+            }
+            $lastFinished = $historyRecords->last(fn ($h) => $h->new_status === 'finished');
+            if ($lastFinished) {
+                $times['finished'] = $lastFinished->changed_at;
+            }
+        }
+
+        // No records at all
+        if (empty($times)) {
+            return null;
+        }
+
+        $pickedAt    = $times['picked']      ?? null;
+        $inProgAt    = $times['in_progress'] ?? null;
+        $deliveredAt = $times['delivered']   ?? null;
+        $finishedAt  = $times['finished']    ?? null;
+
+        // Earliest known timestamp — used as route anchor when picked is absent
+        $firstKnown = collect($times)->sortBy(fn ($t) => $t->timestamp)->first();
+
+        // Effective departure: picked → in_progress (fallback)
+        $departureAt = $pickedAt ?? $inProgAt;
+
+        // Duration: departure → delivered (fallback to finished if delivered is absent)
+        $durationMinutes = null;
+        $durationHuman   = null;
+        $durationEnd = $deliveredAt ?? $finishedAt;
+        if ($departureAt && $durationEnd) {
+            $diff = $durationEnd->diff($departureAt);
+            $durationMinutes = ($diff->days * 24 * 60) + ($diff->h * 60) + $diff->i;
+            $durationHuman   = $this->formatDuration($diff);
+        }
+
+        $fmt = fn ($dt) => $dt?->format('Y-m-d H:i:s');
+
+        return [
+            // Carbon instances — used by route start/end tracking above
+            'pickup_time'  => $departureAt ?? $firstKnown,
+            'delivered_at' => $durationEnd,
+
+            // All formatted timestamps for API output
+            'timestamps' => [
+                'picked'      => $fmt($pickedAt),
+                'in_progress' => $fmt($times['in_progress'] ?? null),
+                'arrived'     => $fmt($times['arrived']     ?? null),
+                'delivered'   => $fmt($deliveredAt),
+                'returning'   => $fmt($times['returning']   ?? null),
+                'finished'    => $fmt($times['finished']    ?? null),
+            ],
+
+            'delivery_time_minutes' => $durationMinutes,
+            'delivery_time_human'   => $durationHuman,
         ];
     }
 
@@ -1376,38 +1819,49 @@ class ShipmentProgressController extends Controller
                 }
             }
             
-            // Rule B: Multi-package workflow - hanya untuk returning/finished
+            // Rule B: Multi-package workflow - returning/finished
+            // Izinkan jika SEMUA destination lain sudah delivered/returning/finished
             if (in_array($requestedStatus, ['returning', 'finished'])) {
+                $othersReady = $allDestinations->every(function ($dest) use ($destination) {
+                    if ($dest->id === $destination->id) return true;
+                    return in_array($dest->status, ['delivered', 'returning', 'finished']);
+                });
+
                 \Log::info('Checking returning/finished permission', [
-                    'is_last_package' => $isLastPackage,
+                    'others_ready' => $othersReady,
                     'current_package_index' => $currentPackageIndex,
                     'total_packages' => $totalPackages,
                 ]);
-                
-                if ($isLastPackage) {
+
+                if ($othersReady) {
                     return [
                         'allowed' => true,
-                        'message' => 'Allowed: This is the last package',
-                        'rule' => 'Rule B: Multi-package - last package can return',
+                        'message' => 'Allowed: All other packages are delivered',
+                        'rule' => 'Rule B: Multi-package - all others delivered',
                         'package_info' => [
                             'total_packages' => $totalPackages,
                             'current_package_position' => $currentPackageIndex + 1,
-                            'is_last_package' => true,
+                            'is_last_package' => $isLastPackage,
                         ],
-                        'explanation' => 'Ini adalah paket terakhir, boleh returning → finished'
+                        'explanation' => 'Semua paket lain sudah delivered/returning/finished, boleh returning → finished'
                     ];
                 } else {
+                    $unfinished = $allDestinations->filter(function ($dest) use ($destination) {
+                        return $dest->id !== $destination->id
+                            && !in_array($dest->status, ['delivered', 'returning', 'finished']);
+                    })->count();
+
                     return [
                         'allowed' => false,
                         'message' => 'Not allowed: You still have other packages to deliver',
-                        'rule' => 'Rule B: Multi-package - only last package can return',
+                        'rule' => 'Rule B: Multi-package - not all packages delivered',
                         'package_info' => [
                             'total_packages' => $totalPackages,
                             'current_package_position' => $currentPackageIndex + 1,
-                            'remaining_packages' => $totalPackages - ($currentPackageIndex + 1),
-                            'is_last_package' => false,
+                            'remaining_packages' => $unfinished,
+                            'is_last_package' => $isLastPackage,
                         ],
-                        'explanation' => 'Paket 1 & 2 mentok di delivered. Hanya paket terakhir yang bisa returning → finished'
+                        'explanation' => "Masih ada {$unfinished} paket yang belum delivered"
                     ];
                 }
             }
@@ -1497,11 +1951,14 @@ class ShipmentProgressController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            \Log::error('Failed to remove shipment from bulk assignment', [
+            \Log::error('Failed to remove shipment from bulk assignment — data bulk_assignments mungkin tidak konsisten, perlu dicek manual', [
                 'shipment_id' => $shipmentId,
                 'driver_id' => $driverId,
                 'error' => $e->getMessage(),
             ]);
+            // Rethrow agar outer DB transaction bisa rollback
+            // dan takeover tidak berjalan setengah-setengah
+            throw $e;
         }
     }
 
@@ -1512,25 +1969,23 @@ class ShipmentProgressController extends Controller
     private function updateBulkAssignmentStatusOnCompletion(Shipment $completedShipment, int $driverId): void
     {
         try {
-            // Find bulk assignment containing this shipment
-            $connection = DB::connection();
-            $driver = $connection->getDriverName();
-            
+            // Cari SEMUA bulk yang memuat shipment ini. Satu shipment bisa muncul di
+            // beberapa bulk assignment (mis. admin re-assign), dan tiap bulk wajib
+            // ikut ditutup begitu paket terakhirnya selesai — kalau tidak, FE akan
+            // melihat shipment lain di bulk yang sama masih "delivered" dan memicu
+            // flow returning/finished ulang.
+            $driver = DB::connection()->getDriverName();
+            $bulkQuery = DB::table('bulk_assignments')->where('driver_id', $driverId);
+
             if ($driver === 'mysql') {
-                // MySQL syntax
-                $bulkAssignment = DB::table('bulk_assignments')
-                    ->where('driver_id', $driverId)
-                    ->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($completedShipment->id)])
-                    ->first();
+                $bulkQuery->whereRaw('JSON_CONTAINS(shipment_ids, ?)', [json_encode($completedShipment->id)]);
             } else {
-                // PostgreSQL syntax
-                $bulkAssignment = DB::table('bulk_assignments')
-                    ->where('driver_id', $driverId)
-                    ->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)])
-                    ->first();
+                $bulkQuery->whereRaw('shipment_ids::jsonb @> ?', [json_encode($completedShipment->id)]);
             }
 
-            if (!$bulkAssignment) {
+            $bulkAssignments = $bulkQuery->get();
+
+            if ($bulkAssignments->isEmpty()) {
                 \Log::info('No bulk assignment found for completed shipment', [
                     'shipment_id' => $completedShipment->id,
                     'driver_id' => $driverId,
@@ -1538,40 +1993,36 @@ class ShipmentProgressController extends Controller
                 return;
             }
 
-            $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
-            
-            // Get all shipments in this bulk assignment
-            $allBulkShipments = Shipment::with('destinations')
-                ->whereIn('id', $shipmentIds)
-                ->where('assigned_driver_id', $driverId)
-                ->get();
+            foreach ($bulkAssignments as $bulkAssignment) {
+                $shipmentIds = json_decode($bulkAssignment->shipment_ids, true);
 
-            \Log::info('Checking bulk assignment completion status', [
-                'bulk_assignment_id' => $bulkAssignment->id,
-                'total_shipments' => $allBulkShipments->count(),
-                'shipment_ids' => $shipmentIds,
-            ]);
+                $allBulkShipments = Shipment::with('destinations')
+                    ->whereIn('id', $shipmentIds)
+                    ->where('assigned_driver_id', $driverId)
+                    ->get();
 
-            // Check if this is the last package (paket terakhir) that just finished
-            $isLastPackage = $this->isLastPackageInBulkAssignment($completedShipment, $allBulkShipments, $shipmentIds);
-            
-            if ($isLastPackage) {
-                \Log::info('Last package completed - updating all bulk assignment shipments', [
-                    'completed_shipment_id' => $completedShipment->id,
+                $isLastPackage = $this->isLastPackageInBulkAssignment($completedShipment, $allBulkShipments, $shipmentIds);
+
+                \Log::info('Checking bulk assignment completion status', [
                     'bulk_assignment_id' => $bulkAssignment->id,
+                    'total_shipments' => $allBulkShipments->count(),
+                    'shipment_ids' => $shipmentIds,
+                    'is_last_package' => $isLastPackage,
                 ]);
+
+                if (!$isLastPackage) {
+                    continue;
+                }
 
                 $updatedCount = 0;
                 foreach ($allBulkShipments as $bulkShipment) {
-                    // Skip the already completed shipment
                     if ($bulkShipment->id === $completedShipment->id) {
                         continue;
                     }
 
-                    // Update shipment status to completed if not already
                     if ($bulkShipment->status !== 'completed') {
                         $oldStatus = $bulkShipment->status;
-                        $bulkShipment->update(['status' => 'completed']);
+                        $bulkShipment->update(['status' => 'completed', 'completed_at' => $bulkShipment->completed_at ?? now()]);
                         $updatedCount++;
 
                         \Log::info('Bulk shipment status updated to completed', [
@@ -1579,10 +2030,18 @@ class ShipmentProgressController extends Controller
                             'shipment_code' => $bulkShipment->shipment_id,
                             'old_status' => $oldStatus,
                             'new_status' => 'completed',
-                            'reason' => 'Last package in bulk assignment completed',
+                            'bulk_assignment_id' => $bulkAssignment->id,
                             'trigger_shipment_id' => $completedShipment->id,
                         ]);
                     }
+
+                    // Tutup juga destinasi yang masih in-flight (selain returning/finished)
+                    // jadi `finished`. Tanpa ini FE `shouldShowBulkAssignment` masih
+                    // melihat destinasi `delivered` dan menampilkan tombol "Kembali ke
+                    // Kantor" untuk bulk yang sebenarnya sudah selesai.
+                    $bulkShipment->destinations()
+                        ->whereNotIn('status', ['finished', 'returning'])
+                        ->update(['status' => 'finished']);
                 }
 
                 \Log::info('Bulk assignment completion update finished', [
@@ -1590,13 +2049,7 @@ class ShipmentProgressController extends Controller
                     'updated_shipments_count' => $updatedCount,
                     'trigger_shipment_id' => $completedShipment->id,
                 ]);
-            } else {
-                \Log::info('Not the last package - no bulk update needed', [
-                    'completed_shipment_id' => $completedShipment->id,
-                    'bulk_assignment_id' => $bulkAssignment->id,
-                ]);
             }
-
         } catch (\Exception $e) {
             \Log::error('Failed to update bulk assignment status on completion', [
                 'shipment_id' => $completedShipment->id,
@@ -1616,7 +2069,7 @@ class ShipmentProgressController extends Controller
         $user = $request->user();
         
         // Only admin can access this endpoint
-        if (!$user->hasRole('Admin')) {
+        if (!$user->hasAnyRole(['Admin', 'Super Admin'])) {
             return response()->json([
                 'message' => 'This endpoint is only for admin'
             ], 403);

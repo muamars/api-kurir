@@ -75,7 +75,13 @@ class BlogController extends Controller
     public function apiIndex()
     {
         $user = auth()->user();
-        $userRole = $user->roles->first()->name ?? 'User';
+
+        if ($user && $user->hasAnyRole(['Admin', 'Super Admin'])) {
+            $blogs = Blog::with('user')->latest()->paginate(10);
+            return response()->json($blogs);
+        }
+
+        $userRole = $user ? ($user->roles->first()->name ?? 'User') : 'User';
         
         // Menggunakan scope untuk filter berdasarkan role
         $blogs = Blog::with('user')
@@ -123,7 +129,7 @@ class BlogController extends Controller
         $user = auth()->user();
         
         // Cek apakah user bisa melihat blog ini berdasarkan target audience
-        if (!$user->hasRole('Admin')) {
+        if (!$user->hasAnyRole(['Admin', 'Super Admin'])) {
             $allowedAudiences = ['all'];
             
             if ($user->hasRole('Kurir')) {
@@ -152,10 +158,10 @@ class BlogController extends Controller
             try {
                 // Delete old images if exist
                 if ($blog->image_url) {
-                    Storage::delete($blog->image_url);
+                    Storage::disk('public')->delete($blog->image_url);
                 }
                 if ($blog->image_thumbnail) {
-                    Storage::delete($blog->image_thumbnail);
+                    Storage::disk('public')->delete($blog->image_thumbnail);
                 }
 
                 $image = $request->file('image');
@@ -185,10 +191,10 @@ class BlogController extends Controller
     {
         // Delete associated images if exist
         if ($blog->image_url) {
-            Storage::delete($blog->image_url);
+            Storage::disk('public')->delete($blog->image_url);
         }
         if ($blog->image_thumbnail) {
-            Storage::delete($blog->image_thumbnail);
+            Storage::disk('public')->delete($blog->image_thumbnail);
         }
 
         $blog->delete();
@@ -213,7 +219,7 @@ class BlogController extends Controller
         $compressedImage = $this->compressBlogImage($image, $originalWidth, $originalHeight);
         $encodedImage = $compressedImage->toJpeg($this->getBlogCompressionQuality($originalWidth, $originalHeight));
         
-        Storage::put($originalPath, $encodedImage);
+        Storage::disk('public')->put($originalPath, $encodedImage);
 
         // Generate and store thumbnail (400x300px for blog)
         $thumbnailPath = $directory.'/thumbnails/thumb_'.$filename;
@@ -222,8 +228,8 @@ class BlogController extends Controller
             $constraint->upsize();
         });
         $thumbnailEncoded = $thumbnail->toJpeg(85); // Good quality for thumbnails
-        
-        Storage::put($thumbnailPath, $thumbnailEncoded);
+
+        Storage::disk('public')->put($thumbnailPath, $thumbnailEncoded);
 
         return [
             'original' => $originalPath,
