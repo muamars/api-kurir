@@ -1745,13 +1745,16 @@ class ShipmentProgressController extends Controller
             
             // Get all destinations from these shipments in the correct order
             $allDestinations = collect();
+            $bulkShipmentsMap = collect();
             foreach ($shipmentIds as $shipmentId) {
                 $bulkShipment = Shipment::with('destinations')
                     ->where('id', $shipmentId)
                     ->where('assigned_driver_id', auth()->id())
                     ->first();
                 
-                if ($bulkShipment) {
+                // Exclude cancelled shipments
+                if ($bulkShipment && $bulkShipment->status !== 'cancelled') {
+                    $bulkShipmentsMap->put($bulkShipment->id, $bulkShipment);
                     foreach ($bulkShipment->destinations as $dest) {
                         $allDestinations->push($dest);
                     }
@@ -1776,8 +1779,8 @@ class ShipmentProgressController extends Controller
                 })->toArray()
             ]);
             
-            // Rule A: Hanya 1 paket → Full cycle allowed
-            if ($totalPackages === 1) {
+            // Rule A: Hanya 1 paket aktif → Full cycle allowed
+            if ($totalPackages <= 1) {
                 return [
                     'allowed' => true,
                     'message' => 'Allowed: Single package workflow',
@@ -1787,11 +1790,20 @@ class ShipmentProgressController extends Controller
                         'current_package_position' => 1,
                         'is_last_package' => true,
                     ],
-                    'explanation' => 'Kurir hanya punya 1 paket, boleh full cycle sampai finished'
+                    'explanation' => 'Kurir hanya punya 1 paket aktif, boleh full cycle sampai finished'
                 ];
             }
             
             $isLastPackage = ($currentPackageIndex !== false) && ($currentPackageIndex === $totalPackages - 1);
+            
+            // Helper function to check if destination/package is considered completed/resolved
+            $isDestinationCompleted = function ($dest) use ($bulkShipmentsMap) {
+                $parentShipment = $bulkShipmentsMap->get($dest->shipment_id);
+                if ($parentShipment && in_array($parentShipment->status, ['completed', 'cancelled'])) {
+                    return true;
+                }
+                return in_array($dest->status, ['delivered', 'completed', 'returning', 'finished', 'takeover', 'failed']);
+            };
             
             // 🔑 NEW: Rule C - Sequential Processing Validation
             // Check if trying to start a package while previous packages are not completed
@@ -1799,7 +1811,7 @@ class ShipmentProgressController extends Controller
                 // Check if any previous packages are not yet delivered
                 for ($i = 0; $i < $currentPackageIndex; $i++) {
                     $previousPackage = $allDestinations[$i];
-                    if (!in_array($previousPackage->status, ['delivered', 'returning', 'finished'])) {
+                    if (!$isDestinationCompleted($previousPackage)) {
                         return [
                             'allowed' => false,
                             'message' => 'Sequential processing required: Previous package must be completed first',
@@ -1820,11 +1832,11 @@ class ShipmentProgressController extends Controller
             }
             
             // Rule B: Multi-package workflow - returning/finished
-            // Izinkan jika SEMUA destination lain sudah delivered/returning/finished
+            // Izinkan jika SEMUA destination lain sudah delivered/returning/finished/completed/takeover/failed
             if (in_array($requestedStatus, ['returning', 'finished'])) {
-                $othersReady = $allDestinations->every(function ($dest) use ($destination) {
+                $othersReady = $allDestinations->every(function ($dest) use ($destination, $isDestinationCompleted) {
                     if ($dest->id === $destination->id) return true;
-                    return in_array($dest->status, ['delivered', 'returning', 'finished']);
+                    return $isDestinationCompleted($dest);
                 });
 
                 \Log::info('Checking returning/finished permission', [
@@ -1846,9 +1858,9 @@ class ShipmentProgressController extends Controller
                         'explanation' => 'Semua paket lain sudah delivered/returning/finished, boleh returning → finished'
                     ];
                 } else {
-                    $unfinished = $allDestinations->filter(function ($dest) use ($destination) {
+                    $unfinished = $allDestinations->filter(function ($dest) use ($destination, $isDestinationCompleted) {
                         return $dest->id !== $destination->id
-                            && !in_array($dest->status, ['delivered', 'returning', 'finished']);
+                            && !$isDestinationCompleted($dest);
                     })->count();
 
                     return [
