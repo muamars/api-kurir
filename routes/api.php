@@ -159,11 +159,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/drivers/standby', [UserController::class, 'getStandbyDrivers']);
         Route::get('/users', [UserController::class, 'getUsers']);
 
-        // Customer Management (all authenticated users can view)
-        Route::get('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'index']);
-        Route::get('/customers/search', [\App\Http\Controllers\Api\CustomerController::class, 'search']);
-        Route::get('/customers/companies', [\App\Http\Controllers\Api\CustomerController::class, 'companies']);
-        Route::get('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'show']);
+        // Customer Management (Super Admin, Admin, User - Driver excluded)
+        Route::middleware('role:Super Admin|Admin|User')->group(function () {
+            Route::get('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'index']);
+            Route::get('/customers/search', [\App\Http\Controllers\Api\CustomerController::class, 'search']);
+            Route::get('/customers/companies', [\App\Http\Controllers\Api\CustomerController::class, 'companies']);
+            Route::get('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'show']);
+            Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);
+            Route::put('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'update']);
+            Route::delete('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'destroy']);
+        });
 
         // Kurir self-service status toggle
         Route::post('/my-status/toggle', [UserController::class, 'toggleMyStatus']);
@@ -230,10 +235,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::put('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'update']);
             Route::delete('/shipment-categories/{shipmentCategory}', [\App\Http\Controllers\Api\ShipmentCategoryController::class, 'destroy']);
 
-            // Customer Management (Admin only for create/update/delete)
-            Route::post('/customers', [\App\Http\Controllers\Api\CustomerController::class, 'store']);
-            Route::put('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'update']);
-            Route::delete('/customers/{customer}', [\App\Http\Controllers\Api\CustomerController::class, 'destroy']);
+
 
             // Division Management (Admin only for create/update/delete)
             Route::get('/divisions/{division}', [DivisionController::class, 'show']);
