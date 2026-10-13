@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AuthController as ApiAuthController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DriverJourneyController;
 use App\Http\Controllers\Api\DivisionController;
+use App\Http\Controllers\Api\GeocodingController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ShipmentController;
@@ -152,6 +153,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shipments/{shipment}/photos/pickup', [ShipmentPhotoController::class, 'uploadPickupPhoto']);
         Route::post('/shipments/{shipment}/photos/delivery', [ShipmentPhotoController::class, 'uploadDeliveryPhoto']);
         Route::delete('/shipments/{shipment}/photos/{photo}', [ShipmentPhotoController::class, 'destroy']);
+
+        // Geocoding Proxy (Reverse Geocoding for Driver Watermark & Tracking)
+        Route::get('/geo/reverse', [GeocodingController::class, 'reverse']);
 
         // Master data
         Route::get('/divisions', [DivisionController::class, 'index']);
