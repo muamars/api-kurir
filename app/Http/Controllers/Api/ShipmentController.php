@@ -644,13 +644,19 @@ class ShipmentController extends Controller
 
     public function reschedule(Shipment $shipment): JsonResponse
     {
-        if (! in_array($shipment->status, ['pending'])) {
+        if (! in_array($shipment->status, ['pending', 'assigned'])) {
             return response()->json([
-                'message' => 'Hanya shipment berstatus pending yang bisa di-reschedule',
+                'message' => 'Hanya shipment berstatus pending atau assigned yang bisa di-reschedule',
             ], 400);
         }
 
-        $shipment->update(['deadline_locked' => false]);
+        $updateData = ['deadline_locked' => false];
+        if ($shipment->status === 'assigned') {
+            $updateData['status'] = 'pending';
+            $updateData['assigned_driver_id'] = null;
+        }
+
+        $shipment->update($updateData);
 
         return response()->json([
             'message' => 'Shipment dibuka untuk reschedule. User dapat mengubah deadline.',
@@ -663,12 +669,16 @@ class ShipmentController extends Controller
         $user = auth()->user();
 
         // Admin & Super Admin boleh update deadline kapan saja.
-        // Jika user biasa, harus merupakan creator dari shipment ini.
-        if (! $user->hasAnyRole(['Admin', 'Super Admin']) && $shipment->created_by !== $user->id) {
+        // User biasa boleh jika merupakan creator atau berasal dari divisi yang sama.
+        $isAuthorized = $user->hasAnyRole(['Admin', 'Super Admin'])
+            || $shipment->created_by === $user->id
+            || ($user->division_id && $shipment->division_id === $user->division_id);
+
+        if (! $isAuthorized) {
             return response()->json(['message' => 'Anda tidak memiliki hak akses untuk mengubah deadline pengiriman ini.'], 403);
         }
 
-        // Pengecekan deadline_locked & status pending hanya berlaku untuk user biasa (non-admin)
+        // Pengecekan deadline_locked & status hanya berlaku untuk user biasa (non-admin)
         if (! $user->hasAnyRole(['Admin', 'Super Admin'])) {
             if ($shipment->deadline_locked) {
                 return response()->json([
@@ -676,28 +686,55 @@ class ShipmentController extends Controller
                 ], 403);
             }
 
-            if ($shipment->status !== 'pending') {
+            if (! in_array($shipment->status, ['pending', 'assigned'])) {
                 return response()->json([
-                    'message' => 'Hanya shipment berstatus pending yang bisa diubah deadlinenya.',
+                    'message' => 'Hanya shipment berstatus pending atau assigned yang bisa diubah deadlinenya.',
                 ], 400);
             }
         }
 
         $request->validate([
-            'deadline'                     => 'required|date',
-            'scheduled_delivery_datetime'  => 'nullable|date',
+            'deadline'                     => 'required',
+            'scheduled_delivery_datetime'  => 'nullable',
         ]);
 
-        $deadlineFormatted = Carbon::parse($request->deadline)->format('Y-m-d H:i:s');
-        $scheduledFormatted = $request->scheduled_delivery_datetime
-            ? Carbon::parse($request->scheduled_delivery_datetime)->format('Y-m-d H:i:s')
-            : $deadlineFormatted;
+        try {
+            $deadlineRaw = (string) $request->deadline;
+            $cleanDeadline = preg_replace('/(:\d{2}):\d{2}$/', '$1', $deadlineRaw);
+            $deadlineFormatted = Carbon::parse($cleanDeadline)->format('Y-m-d H:i:s');
+
+            $scheduledFormatted = $deadlineFormatted;
+            if ($request->filled('scheduled_delivery_datetime')) {
+                $scheduledRaw = (string) $request->scheduled_delivery_datetime;
+                $cleanScheduled = preg_replace('/(:\d{2}):\d{2}$/', '$1', $scheduledRaw);
+                $scheduledFormatted = Carbon::parse($cleanScheduled)->format('Y-m-d H:i:s');
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Format tanggal atau waktu tidak valid.',
+                'error'   => $e->getMessage(),
+            ], 422);
+        }
+
+        $oldDeadline = $shipment->deadline ? Carbon::parse($shipment->deadline)->format('Y-m-d H:i:s') : null;
 
         $shipment->update([
             'deadline'                    => $deadlineFormatted,
             'scheduled_delivery_datetime' => $scheduledFormatted,
             'deadline_locked'             => true, // kunci kembali setelah simpan
         ]);
+
+        // Audit log status history
+        ShipmentStatusHistory::record(
+            $shipment->id,
+            $shipment->status,
+            $shipment->status,
+            'reschedule',
+            $user->id,
+            null,
+            null,
+            "Deadline pengiriman diubah dari [{$oldDeadline}] menjadi [{$deadlineFormatted}]"
+        );
 
         return response()->json([
             'message' => 'Deadline berhasil diperbarui.',
