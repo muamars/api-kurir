@@ -55,7 +55,7 @@ class StoreShipmentRequest extends FormRequest
 
             'items' => 'required|array|min:1',
             'items.*.no_referensi' => 'nullable|string|max:255',
-            'items.*.item_name' => 'required|string|max:255',
+            'items.*.item_name' => 'required|string',
             'items.*.quantity' => 'nullable|integer',
             'items.*.description' => 'nullable|string',
         ];
